@@ -91,3 +91,17 @@ def test_cli_sample_and_judge(tmp_path):
                         "--pool", "tokenizer=unicode61"], input="2\n2\n2\n2\n", capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert "grades saved" in r.stdout and load_qrels(root / "qrels" / "test.tsv")["q1"]["1"] == 2
+
+
+def test_terminal_output_is_sanitised(tmp_path):
+    from relevance_gate.judging import safe
+
+    assert safe("ok\x1b[2J\u202etxt") == "ok\\u001b[2J\\u202etxt"
+    assert safe("a\nb", keep_newlines=True) == "a\nb" and safe("a\nb") == "a\\u000ab"
+    root = tmp_path / "evil"
+    root.mkdir()
+    (root / "queries.jsonl").write_text(json.dumps({"_id": "q", "text": "x\x1b]0;pwned\x07"}) + "\n")
+    (root / "corpus.jsonl").write_text(json.dumps({"_id": "d", "title": "\x1b[31mred", "text": "b"}) + "\n")
+    shown = io.StringIO()
+    judge(root, [lambda q, k: ["d"]], 10, root / "qrels" / "test.tsv", io.StringIO("1\n"), shown)
+    assert "\x1b" not in shown.getvalue() and "\x07" not in shown.getvalue()

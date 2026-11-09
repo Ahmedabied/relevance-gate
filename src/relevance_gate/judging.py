@@ -19,6 +19,7 @@ import hashlib
 import json
 import random
 import re
+import unicodedata
 from collections import Counter
 from pathlib import Path
 from typing import Callable, TextIO
@@ -30,6 +31,20 @@ PII = re.compile(
     r"|\+?\d[\d\s().-]{7,}\d"             # phone-like
     r"|\b\d{6,}\b"                         # long digit runs: ids, card or account numbers
 )
+
+
+def safe(text: str, keep_newlines: bool = False) -> str:
+    """Logs and corpora are untrusted. Control characters (escape sequences, bidi overrides)
+    are shown as codes so they cannot rewrite the judge's terminal or the prompt."""
+    out = []
+    for ch in text:
+        if keep_newlines and ch == "\n":
+            out.append(ch)
+        elif unicodedata.category(ch)[0] == "C":
+            out.append(f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def normalise(q: str) -> str:
@@ -125,10 +140,11 @@ def judge(data: str | Path, searchers: list[Callable[[str, int], list[str]]], de
                 continue
             random.Random(f"{seed}:{qid}").shuffle(todo)  # blind: no hint of which config found it
             stats["queries"] += 1
-            say.write(f"\n=== {text}   ({len(todo)} to judge)\n")
+            say.write(f"\n=== {safe(text)}   ({len(todo)} to judge)\n")
             for doc in todo:
                 title, body = docs.get(doc, ("", ""))
-                say.write(f"\n[{doc}] {title}\n{body[:400]}\n  grade: 2 relevant, 1 partly, 0 not, s skip, q quit > ")
+                say.write(f"\n[{safe(doc)}] {safe(title)}\n{safe(body[:400], keep_newlines=True)}\n"
+                          "  grade: 2 relevant, 1 partly, 0 not, s skip, q quit > ")
                 say.flush()
                 while True:
                     answer = ask_in.readline()
