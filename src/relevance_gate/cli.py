@@ -133,6 +133,13 @@ def cmd_judge(a) -> int:
             searchers.append(Fts5Engine(docs, o.get("tokenizer", "porter unicode61 remove_diacritics 2"),
                                         o.get("mode", "or"), float(o.get("title_weight", 1.0))).search)
     out = a.output or str(root / "qrels" / "test.tsv")
+    if a.pool_out:
+        from .judging import write_pool
+
+        stats = write_pool(root, searchers, a.depth, out, a.pool_out)
+        print(f"{stats['documents']} documents for {stats['queries']} queries written to {a.pool_out}; "
+              f"grade them at https://judge-ui.ahmed-abied.workers.dev and save the export as {out}")
+        return 0
     stats = judge(root, searchers, a.depth, out, sys.stdin, sys.stdout)
     print(f"\n{stats['judged']} grades saved to {out} ({stats['skipped']} skipped, {stats['queries']} queries)")
     return 0
@@ -196,6 +203,8 @@ def build_parser() -> argparse.ArgumentParser:
     j.add_argument("--ids", help="where the ids are in your engine's JSON")
     j.add_argument("--depth", type=int, default=10, help="top results per config to pool (default 10)")
     j.add_argument("-o", "--output", help="qrels file (default DATA/qrels/test.tsv)")
+    j.add_argument("--pool-out", metavar="FILE", help="write the documents to judge to FILE for judge-ui in the "
+                                                    "browser instead of asking here")
     j.set_defaults(fn=cmd_judge)
 
     s = sub.add_parser("show", help="print a report's numbers")

@@ -105,3 +105,19 @@ def test_terminal_output_is_sanitised(tmp_path):
     shown = io.StringIO()
     judge(root, [lambda q, k: ["d"]], 10, root / "qrels" / "test.tsv", io.StringIO("1\n"), shown)
     assert "\x1b" not in shown.getvalue() and "\x07" not in shown.getvalue()
+
+
+def test_pool_out_writes_what_is_left_for_judge_ui(tmp_path):
+    root = _setup(tmp_path)
+    out = root / "qrels" / "test.tsv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("query-id\tcorpus-id\tscore\nq1\t1\t2\n")
+    pool = tmp_path / "pool.jsonl"
+    r = subprocess.run([sys.executable, "-m", "relevance_gate", "judge", "--data", str(root), "--pool", "",
+                        "--pool-out", str(pool)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    rows = [json.loads(l) for l in pool.read_text().splitlines()]
+    assert rows and all(set(x) == {"query_id", "query", "doc_id", "title", "text"} for x in rows)
+    assert ("q1", "1") not in {(x["query_id"], x["doc_id"]) for x in rows}  # already judged
+    assert any(x["doc_id"] == "3" and x["title"] == "shoe rack" for x in rows)
+    assert "judge-ui" in r.stdout

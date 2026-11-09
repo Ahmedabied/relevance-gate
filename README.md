@@ -84,6 +84,10 @@ relevance-gate judge --data mysearch --url 'http://localhost:8000/search?q={quer
 each document's text, and can pool extra FTS5 configs with `--pool 'tokenizer=unicode61'` so the judged set is
 not shaped by one engine alone. 150 queries with 10 results each is a few hours of judging, once.
 
+Rather grade in the browser? Add `--pool-out pool.jsonl` and `judge` writes the documents still to grade instead
+of asking. Open that file in [judge-ui](https://github.com/Ahmedabied/judge-ui) (keys 2, 1, 0; progress kept in
+the browser) and save its export as `mysearch/qrels/test.tsv`.
+
 **2. Evaluate** your engine. Over HTTP (one GET per query, ids read from the JSON with a path like
 `hits.hits.*._id`):
 
@@ -144,7 +148,7 @@ A document returned twice counts once. Pick metrics with `--metrics ndcg@10,reca
 
 ```sh
 pip install -e '.[test]'
-pytest -q               # 45 tests, about 1.5 s
+pytest -q               # 46 tests, about 1.5 s
 ```
 
 Tests use a generated corpus, so CI needs no downloads. The `search-quality` workflow runs the real SciFact gate.

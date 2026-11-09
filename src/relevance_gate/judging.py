@@ -167,6 +167,36 @@ def judge(data: str | Path, searchers: list[Callable[[str, int], list[str]]], de
     return stats
 
 
+def write_pool(data: str | Path, searchers: list[Callable[[str, int], list[str]]], depth: int, qrels: str | Path,
+               out: str | Path, seed: int = 0) -> dict:
+    """Write what `judge` would ask, as a pool file for judge-ui (github.com/Ahmedabied/judge-ui): JSON lines of
+    {query_id, query, doc_id, title, text}. Documents already in `qrels` are left out, so the file holds only the
+    work that is left. judge-ui shuffles each query's documents itself."""
+    root = Path(data)
+    queries = {str(q["_id"]): str(q.get("text", "")) for q in _jsonl(root / "queries.jsonl")}
+    docs = {}
+    if (root / "corpus.jsonl").exists():
+        docs = {str(d["_id"]): (str(d.get("title") or ""), str(d.get("text") or "")) for d in _jsonl(root / "corpus.jsonl")}
+    qrels = Path(qrels)
+    done = load_qrels(qrels) if qrels.exists() else {}
+    stats = {"documents": 0, "queries": 0}
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "w", encoding="utf-8") as f:
+        for qid, text in queries.items():
+            pool: list[str] = []
+            for s in searchers:
+                pool += [d for d in s(text, depth) if d not in pool]
+            todo = [d for d in pool if d not in done.get(qid, {})]
+            random.Random(f"{seed}:{qid}").shuffle(todo)
+            stats["queries"] += bool(todo)
+            for doc in todo:
+                title, body = docs.get(doc, ("", ""))
+                f.write(json.dumps({"query_id": qid, "query": text, "doc_id": doc, "title": title,
+                                    "text": body[:20000]}, ensure_ascii=False) + "\n")
+                stats["documents"] += 1
+    return stats
+
+
 def write_queries(path: str | Path, picked: list[dict]) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text("".join(json.dumps(q, ensure_ascii=False) + "\n" for q in picked), encoding="utf-8")
