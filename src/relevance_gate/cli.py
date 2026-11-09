@@ -1,4 +1,4 @@
-"""Command line: relevance-gate fetch | eval | gate | show"""
+"""Command line: relevance-gate fetch | sample | judge | eval | gate | show"""
 
 from __future__ import annotations
 
@@ -99,6 +99,45 @@ def cmd_gate(a) -> int:
     return 1 if any(c.failed for c in checks) else 0
 
 
+def cmd_sample(a) -> int:
+    from .judging import read_log, sample, write_queries
+
+    picked, info = sample(read_log(a.log), a.n, a.seed, a.keep_pii)
+    out = a.output or "queries.jsonl"
+    write_queries(out, picked)
+    st = info["strata"]
+    print(f"{info['searches']} searches, {info['distinct']} distinct queries "
+          f"(head {st['head']}, torso {st['torso']}, tail {st['tail']}); "
+          f"dropped {info['dropped_pii']} that look like personal data")
+    by = {k: sum(1 for q in picked if q["stratum"] == k) for k in ("head", "torso", "tail")}
+    print(f"wrote {info['picked']} queries to {out}: head {by['head']}, torso {by['torso']}, tail {by['tail']}")
+    return 0
+
+
+def cmd_judge(a) -> int:
+    from .data import _jsonl
+    from .judging import judge
+
+    root = Path(a.data)
+    searchers = []
+    if a.url:
+        if not a.ids:
+            raise ValueError("--url needs --ids")
+        searchers.append(HttpEngine(a.url, a.ids).search)
+    if a.pool or not a.url:
+        if not (root / "corpus.jsonl").exists():
+            raise ValueError(f"{root}: the fts5 pool needs corpus.jsonl; or pool from your engine with --url")
+        docs = {str(d["_id"]): (str(d.get("title") or ""), str(d.get("text") or "")) for d in _jsonl(root / "corpus.jsonl")}
+        for spec in a.pool or [""]:
+            o = _opts([x for x in spec.split(",") if x.strip()])
+            searchers.append(Fts5Engine(docs, o.get("tokenizer", "porter unicode61 remove_diacritics 2"),
+                                        o.get("mode", "or"), float(o.get("title_weight", 1.0))).search)
+    out = a.output or str(root / "qrels" / "test.tsv")
+    stats = judge(root, searchers, a.depth, out, sys.stdin, sys.stdout)
+    print(f"\n{stats['judged']} grades saved to {out} ({stats['skipped']} skipped, {stats['queries']} queries)")
+    return 0
+
+
 def cmd_show(a) -> int:
     _summary(load_report(a.report))
     return 0
@@ -140,6 +179,24 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--rounds", type=int, default=10000, help="randomization test rounds")
     g.add_argument("--summary", help="also append the markdown here (GITHUB_STEP_SUMMARY is used if set)")
     g.set_defaults(fn=cmd_gate)
+
+    sm = sub.add_parser("sample", help="pick queries to judge from a search log (head, torso and tail)")
+    sm.add_argument("log", help="text (one search per line), CSV with a query column, or JSON lines")
+    sm.add_argument("-n", type=int, default=150, help="how many queries (default 150)")
+    sm.add_argument("-o", "--output", help="queries.jsonl to write (default ./queries.jsonl)")
+    sm.add_argument("--seed", type=int, default=0)
+    sm.add_argument("--keep-pii", action="store_true", help="keep queries that look like emails or phone numbers")
+    sm.set_defaults(fn=cmd_sample)
+
+    j = sub.add_parser("judge", help="grade pooled results for each query in the terminal; writes qrels")
+    j.add_argument("--data", required=True, help="folder with queries.jsonl (and corpus.jsonl for the fts5 pool)")
+    j.add_argument("--pool", action="append", metavar="OPTS",
+                   help="an fts5 config to pool from, e.g. 'tokenizer=unicode61,mode=and'; repeat for more")
+    j.add_argument("--url", help="also pool from your engine (URL with {query})")
+    j.add_argument("--ids", help="where the ids are in your engine's JSON")
+    j.add_argument("--depth", type=int, default=10, help="top results per config to pool (default 10)")
+    j.add_argument("-o", "--output", help="qrels file (default DATA/qrels/test.tsv)")
+    j.set_defaults(fn=cmd_judge)
 
     s = sub.add_parser("show", help="print a report's numbers")
     s.add_argument("report")
