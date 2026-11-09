@@ -70,3 +70,14 @@ def test_cli_agree(tmp_path):
     other.write_text("q9\td9\t1\n")
     r = cli("agree", str(a), str(other))
     assert r.returncode == 2 and "share no graded documents" in r.stderr
+
+
+def test_interval_resamples_queries_not_documents():
+    # Judges disagree by query, not by document: an ambiguous query splits them on all its documents. Twenty
+    # copies of each document add no information about how often that happens, so the interval must not shrink.
+    from relevance_gate.agree import Agreement
+
+    grades = [(2, 2), (1, 2), (0, 0), (2, 1), (1, 1), (0, 1), (2, 2), (1, 0), (0, 0), (2, 0)]
+    one = Agreement([(f"q{i}", "d", a, b) for i, (a, b) in enumerate(grades)], 0, 0)
+    twenty = Agreement([(f"q{i}", f"d{j}", a, b) for i, (a, b) in enumerate(grades) for j in range(20)], 0, 0)
+    assert one.interval("quadratic") == twenty.interval("quadratic")

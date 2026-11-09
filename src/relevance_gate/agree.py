@@ -56,13 +56,21 @@ def kappa(x: list[int], y: list[int], weights: str = "none") -> float | None:
     return 1.0 - seen / chance
 
 
-def interval(x: list[int], y: list[int], weights: str, rounds: int = 2000, seed: int = 0) -> tuple[float, float] | None:
-    """95% bootstrap interval over the graded documents. Deterministic for a seed."""
+def interval(x: list[int], y: list[int], weights: str, rounds: int = 2000, seed: int = 0,
+             groups: list[str] | None = None) -> tuple[float, float] | None:
+    """95% bootstrap interval. Deterministic for a seed.
+
+    groups (the query of each document): resample queries and keep each one's documents together. Judges disagree
+    by query (an ambiguous query splits them on many of its documents), so documents are not independent, and
+    resampling them one by one gives an interval that is too narrow."""
     rng = random.Random(seed)
-    n = len(x)
+    clusters: dict[str, list[int]] = {}
+    for i, g in enumerate(groups if groups is not None else range(len(x))):
+        clusters.setdefault(str(g), []).append(i)
+    units = list(clusters.values())
     vals = []
     for _ in range(rounds):
-        idx = [rng.randrange(n) for _ in range(n)]
+        idx = [i for _ in units for i in units[rng.randrange(len(units))]]
         v = kappa([x[i] for i in idx], [y[i] for i in idx], weights)
         if v is not None:
             vals.append(v)
@@ -85,6 +93,10 @@ class Agreement:
     @property
     def b(self) -> list[int]:
         return [p[3] for p in self.pairs]
+
+    def interval(self, weights: str) -> tuple[float, float] | None:
+        """Bootstrap over queries: a query's documents stay together."""
+        return interval(self.a, self.b, weights, groups=[p[0] for p in self.pairs])
 
     def exact(self) -> float:
         return sum(p[2] == p[3] for p in self.pairs) / len(self.pairs) if self.pairs else 0.0
@@ -111,9 +123,9 @@ def markdown(ag: Agreement, name_a: str = "A", name_b: str = "B", show: int = 10
     rows = [("same grade", f"{ag.exact():.1%}", "")]
     for label, w in (("kappa", "none"), ("weighted kappa (quadratic)", "quadratic")):
         k = kappa(x, y, w)
-        ci = interval(x, y, w) if k is not None else None
+        ci = ag.interval(w) if k is not None else None
         rows.append((label, "not defined" if k is None else f"{k:.3f}",
-                     (f"95% {ci[0]:.3f} to {ci[1]:.3f}, " if ci else "") + band(k)))
+                     (f"95% {ci[0]:.3f} to {ci[1]:.3f} over queries, " if ci else "") + band(k)))
     if len(grades) > 2:
         kb = kappa([int(v > 0) for v in x], [int(v > 0) for v in y])
         rows.append(("kappa, relevant or not", "not defined" if kb is None else f"{kb:.3f}", band(kb)))
@@ -127,6 +139,8 @@ def markdown(ag: Agreement, name_a: str = "A", name_b: str = "B", show: int = 10
     if worst:
         lines += ["", "Biggest disagreements, to talk through first:", ""]
         lines += [f"- `{q}` `{d}`: {name_a} {ga}, {name_b} {gb}" for q, d, ga, gb in worst]
-    if 0 < len(ag.pairs) < 50:
-        lines += ["", f"Only {len(ag.pairs)} documents: the interval is wide. Have both judges grade more of the same pool."]
+    queries = len({p[0] for p in ag.pairs})
+    if 0 < len(ag.pairs) < 50 or 0 < queries < 10:
+        lines += ["", f"Only {len(ag.pairs)} documents over {queries} quer{'y' if queries == 1 else 'ies'}: the interval is "
+                      "wide. Have both judges grade more of the same pool."]
     return "\n".join(lines) + "\n"

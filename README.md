@@ -18,8 +18,8 @@ search log --sample--> queries --judge--> judged set --eval--> report --gate--> 
   **and** that is unlikely to be noise: a one-sided paired randomization test over the queries, asking whether
   the true drop is bigger than the allowed one. A GitHub Action wraps it.
 - **`agree`** checks that two judges grade alike before you trust the set: Cohen's kappa (plain, weighted for
-  graded relevance, and relevant-or-not) with a bootstrap interval, the grade table, and the documents they
-  disagree on most, to settle first.
+  graded relevance, and relevant-or-not) with a bootstrap interval over queries (a query's documents are not
+  independent), the grade table, and the documents they disagree on most, to settle first.
 
 Stdlib Python only. No dependencies.
 
@@ -188,7 +188,7 @@ A document returned twice counts once. Pick metrics with `--metrics ndcg@10,reca
 
 ```sh
 pip install -e '.[test]'
-pytest -q               # 59 tests, about 2 s
+pytest -q               # 60 tests, about 2 s
 ```
 
 Tests use a generated corpus, so CI needs no downloads. The `search-quality` workflow runs the real SciFact gate.
