@@ -182,7 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("candidate")
     g.add_argument("--fail-on", default="ndcg@10=0.005,recall@100=0.005,zero_results=0.005",
                    help="metric=allowed drop, comma separated (default ndcg@10=0.005,recall@100=0.005,zero_results=0.005)")
-    g.add_argument("--alpha", type=float, default=0.05, help="fail only if the drop has p below this")
+    g.add_argument("--alpha", type=float, default=0.05, help="fail only if p (chance of a drop this big if the true drop were within the allowed one) is below this")
     g.add_argument("--rounds", type=int, default=10000, help="randomization test rounds")
     g.add_argument("--summary", help="also append the markdown here (GITHUB_STEP_SUMMARY is used if set)")
     g.set_defaults(fn=cmd_gate)

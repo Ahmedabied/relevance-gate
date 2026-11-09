@@ -1,8 +1,9 @@
 """Evaluate an engine into a report, and compare two reports with a gate.
 
-The gate fails only when a metric got worse by more than its tolerance AND the drop is unlikely
-to be noise (a paired randomization test over the queries both reports share). A small set of
-judged queries cannot prove much; the gate says so instead of failing on luck.
+The gate fails only when a metric got worse by more than its allowed drop AND that is unlikely to
+be noise: a one-sided paired randomization test over the queries both reports share, with the
+allowed drop built into the null. A small set of judged queries cannot prove much; the gate says
+so instead of failing on luck.
 """
 
 from __future__ import annotations
@@ -50,20 +51,37 @@ def load_report(path: str | Path) -> dict:
     return data
 
 
-def paired_p_value(a: list[float], b: list[float], rounds: int = 10000, seed: int = 0) -> float:
-    """Two-sided paired randomization test on the mean difference. Deterministic for a seed."""
-    diffs = [y - x for x, y in zip(a, b) if y != x]
-    if not diffs:
+def drop_p_value(a: list[float], b: list[float], allowed: float = 0.0, higher_is_better: bool = True,
+                 rounds: int = 10000, seed: int = 0) -> float:
+    """One-sided paired randomization test: is the candidate worse than the baseline by more than `allowed`?
+
+    The null is "the true drop is at most `allowed`". Each query's change is moved by the allowed drop,
+    so a change of exactly -allowed counts as zero, then signs are flipped at random. p is the share of
+    flips at least as bad as what was observed. Deterministic for a seed.
+    """
+    sign = 1.0 if higher_is_better else -1.0
+    shifted = [sign * (y - x) + allowed for x, y in zip(a, b)]
+    shifted = [v for v in shifted if v != 0.0]  # flipping a zero changes nothing
+    if not shifted:
         return 1.0
-    n = len(a)
-    observed = abs(sum(diffs)) / n
-    rng = random.Random(seed)
+    # A flip keeps the sign of the queries whose bit is set: flipped sum = 2 * kept - total. It is at
+    # least as bad as observed (the total) when kept <= total. Subset sums are read from one 256-entry
+    # table per 8 queries, so a round costs n / 8 lookups instead of n random draws.
+    tables = []
+    for i in range(0, len(shifted), 8):
+        chunk = shifted[i:i + 8]
+        table = [0.0] * (1 << len(chunk))
+        for mask in range(1, len(table)):
+            low = mask & -mask
+            table[mask] = table[mask ^ low] + chunk[low.bit_length() - 1]
+        tables.append(table)
+    total = sum(shifted)
+    limit = total + 1e-9 * (1.0 + sum(abs(v) for v in shifted))
+    nbytes, nbits = len(tables), len(shifted)
+    bits = random.Random(seed).getrandbits
     hits = 0
     for _ in range(rounds):
-        s = 0.0
-        for d in diffs:
-            s += d if rng.random() < 0.5 else -d
-        if abs(s) / n >= observed - 1e-12:
+        if sum(map(list.__getitem__, tables, bits(nbits).to_bytes(nbytes, "little"))) <= limit:
             hits += 1
     return (hits + 1) / (rounds + 1)
 
@@ -80,11 +98,18 @@ class Check:
     failed: bool
 
 
+MIN_SHARED = 0.5  # share of the baseline's judged queries the candidate must also have
+
+
 def compare(base: dict, cand: dict, tolerances: dict[str, float], alpha: float = 0.05,
             rounds: int = 10000) -> tuple[list[Check], dict]:
     shared = sorted(set(base["per_query"]) & set(cand["per_query"]))
     info = {"shared": len(shared), "only_baseline": len(set(base["per_query"]) - set(cand["per_query"])),
             "only_candidate": len(set(cand["per_query"]) - set(base["per_query"]))}
+    n_base = len(base["per_query"])
+    if not shared or len(shared) < MIN_SHARED * n_base:
+        raise ValueError(f"the reports share {len(shared)} of the baseline's {n_base} judged queries, so they cannot be "
+                         "compared. Were both made from the same judged set? Re-run the baseline if the set changed.")
     checks = []
     for metric, tol in tolerances.items():
         missing = [r for r in (base, cand) if shared and metric not in r["per_query"][shared[0]]]
@@ -95,8 +120,9 @@ def compare(base: dict, cand: dict, tolerances: dict[str, float], alpha: float =
         ma = statistics.fmean(a) if a else 0.0
         mb = statistics.fmean(b) if b else 0.0
         delta = mb - ma
-        worse = delta < -tol if M.higher_is_better(metric) else delta > tol
-        p = paired_p_value(a, b, rounds) if worse else 1.0
+        up = M.higher_is_better(metric)
+        worse = delta < -tol if up else delta > tol
+        p = drop_p_value(a, b, tol, up, rounds) if worse else 1.0
         checks.append(Check(metric, ma, mb, delta, tol, p, worse, worse and p < alpha))
     return checks, info
 
