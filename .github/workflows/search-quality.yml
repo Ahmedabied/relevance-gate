@@ -1,0 +1,35 @@
+# The gate on a real public dataset, the way you would use it in your own repo:
+# evaluate this commit's search, then compare it to the baseline report committed on main.
+name: search-quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/relevance-gate
+          key: beir-scifact-536e1444
+      - run: python -m pip install -e .
+      - name: Evaluate this commit
+        run: |
+          relevance-gate fetch scifact
+          relevance-gate eval --data ~/.cache/relevance-gate/scifact $(cat examples/scifact/engine.args) \
+            -o candidate.json
+      - name: Gate against the baseline on main
+        uses: ./
+        with:
+          baseline: examples/scifact/baseline.json
+          candidate: candidate.json

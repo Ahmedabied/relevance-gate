@@ -54,7 +54,7 @@ def cmd_eval(a) -> int:
         if not a.cmd:
             raise ValueError("the command engine needs --cmd")
         engine = CommandEngine(shlex.split(a.cmd))
-    report = evaluate(engine, ds, names)
+    report = evaluate(engine, ds, names, query_text=not a.no_query_text)
     text = json.dumps(report, indent=1, ensure_ascii=False)
     if a.output:
         Path(a.output).write_text(text + "\n", encoding="utf-8")
@@ -127,6 +127,8 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--metrics", default=",".join(M.DEFAULT))
     e.add_argument("--limit", type=int, help="only the first N queries (by id)")
     e.add_argument("-o", "--output", help="write the report JSON here")
+    e.add_argument("--no-query-text", action="store_true",
+                   help="leave query text out of the report (for committing reports on datasets you may not share)")
     e.set_defaults(fn=cmd_eval)
 
     g = sub.add_parser("gate", help="compare a candidate report to a baseline; exit 1 if search got worse")

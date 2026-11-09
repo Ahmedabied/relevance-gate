@@ -19,7 +19,7 @@ from .data import Dataset
 from .engines import Engine
 
 
-def evaluate(engine: Engine, ds: Dataset, names: list[str] | None = None) -> dict:
+def evaluate(engine: Engine, ds: Dataset, names: list[str] | None = None, query_text: bool = True) -> dict:
     names = names or M.DEFAULT
     for n in names:
         M.parse(n)
@@ -28,7 +28,7 @@ def evaluate(engine: Engine, ds: Dataset, names: list[str] | None = None) -> dic
     per_query = {}
     for qid, judged in ds.qrels.items():
         s = M.score(run.get(qid, []), judged, names)
-        per_query[qid] = {"query": ds.queries[qid], **{k: round(v, 6) for k, v in s.items()}}
+        per_query[qid] = ({"query": ds.queries[qid]} if query_text else {}) | {k: round(v, 6) for k, v in s.items()}
     means = {n: round(statistics.fmean(pq[n] for pq in per_query.values()), 6) if per_query else 0.0 for n in names}
     lat = sorted(ms.values())
     return {

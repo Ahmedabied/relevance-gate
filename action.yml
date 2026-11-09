@@ -1,0 +1,32 @@
+name: relevance-gate
+description: Fail the pull request when search quality drops. Compares a candidate report to a baseline report.
+branding:
+  icon: search
+  color: green
+inputs:
+  baseline:
+    description: Path to the baseline report (JSON from `relevance-gate eval`), usually committed on main
+    required: true
+  candidate:
+    description: Path to the candidate report produced in this run
+    required: true
+  fail-on:
+    description: metric=allowed drop, comma separated
+    default: ndcg@10=0.005,recall@100=0.005,zero_results=0.005
+  alpha:
+    description: Fail only if the drop is significant at this level
+    default: "0.05"
+runs:
+  using: composite
+  steps:
+    - name: Install relevance-gate
+      shell: bash
+      run: python3 -m pip install --quiet "$GITHUB_ACTION_PATH"
+    - name: Gate
+      shell: bash
+      env:
+        BASELINE: ${{ inputs.baseline }}
+        CANDIDATE: ${{ inputs.candidate }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        ALPHA: ${{ inputs.alpha }}
+      run: relevance-gate gate "$BASELINE" "$CANDIDATE" --fail-on "$FAIL_ON" --alpha "$ALPHA"
