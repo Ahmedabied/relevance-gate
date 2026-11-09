@@ -17,6 +17,9 @@ search log --sample--> queries --judge--> judged set --eval--> report --gate--> 
 - **`gate`** compares a candidate report to a baseline and exits 1 if a metric dropped by more than you allow
   **and** that is unlikely to be noise: a one-sided paired randomization test over the queries, asking whether
   the true drop is bigger than the allowed one. A GitHub Action wraps it.
+- **`agree`** checks that two judges grade alike before you trust the set: Cohen's kappa (plain, weighted for
+  graded relevance, and relevant-or-not) with a bootstrap interval, the grade table, and the documents they
+  disagree on most, to settle first.
 
 Stdlib Python only. No dependencies.
 
@@ -92,6 +95,26 @@ Rather grade in the browser? Add `--pool-out pool.jsonl` and `judge` writes the 
 of asking. Open that file in [judge-ui](https://github.com/Ahmedabied/judge-ui) (keys 2, 1, 0; progress kept in
 the browser) and save its export as `mysearch/qrels/test.tsv`.
 
+**Check the judges agree.** Have a second person grade a sample of the same pool (say 20 queries) into their own
+file, then:
+
+```sh
+relevance-gate agree sam.tsv alex.tsv --disagreements settle.tsv
+```
+
+```
+| | value | |
+|---|---|---|
+| same grade | 70.0% |  |
+| kappa | 0.545 | 95% 0.091 to 1.000, moderate |
+| weighted kappa (quadratic) | 0.565 | 95% -0.064 to 1.000, moderate |
+| kappa, relevant or not | 0.583 | moderate |
+```
+
+That is a 10-document example, so the intervals are wide. Raw agreement flatters: two judges who mark nearly
+everything "not relevant" agree most of the time by luck, and kappa takes that out. Talk through `settle.tsv`
+(biggest gaps first), write down the rule you agreed on, and fix the grades. `--min-kappa 0.6` makes it a CI check.
+
 **2. Evaluate** your engine. Over HTTP (one GET per query, ids read from the JSON with a path like
 `hits.hits.*._id`):
 
@@ -155,7 +178,8 @@ A document returned twice counts once. Pick metrics with `--metrics ndcg@10,reca
 - **Both reports must come from the same judged set.** The gate exits 2 when the candidate has fewer than half of
   the baseline's judged queries; re-run the baseline when the judged set changes. Extra queries in the candidate
   are fine (they are left out of the comparison and counted in the output).
-- **One judge.** There is no inter-judge agreement or adjudication yet.
+- **Agreement is measured, not settled.** `agree` finds where two judges differ; settling it is a conversation, and
+  the settled grades go back into one qrels file by hand.
 - **Latency numbers are indicative**, measured in the same process as the evaluation, not under load.
 - **The built-in engine is a baseline**, not a product: one SQLite FTS5 table, BM25, no synonyms. Hybrid search
   with local embeddings is the next step.
@@ -164,7 +188,7 @@ A document returned twice counts once. Pick metrics with `--metrics ndcg@10,reca
 
 ```sh
 pip install -e '.[test]'
-pytest -q               # 52 tests, about 1.5 s
+pytest -q               # 59 tests, about 2 s
 ```
 
 Tests use a generated corpus, so CI needs no downloads. The `search-quality` workflow runs the real SciFact gate.

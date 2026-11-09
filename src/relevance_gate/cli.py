@@ -1,4 +1,4 @@
-"""Command line: relevance-gate fetch | sample | judge | eval | gate | show"""
+"""Command line: relevance-gate fetch | sample | judge | eval | gate | agree | show"""
 
 from __future__ import annotations
 
@@ -145,6 +145,37 @@ def cmd_judge(a) -> int:
     return 0
 
 
+def cmd_agree(a) -> int:
+    from .agree import compare, kappa, markdown
+    from .data import load_qrels
+
+    for f in (a.a, a.b):
+        if not Path(f).is_file():
+            raise ValueError(f"{f}: no such qrels file")
+    ag = compare(load_qrels(a.a), load_qrels(a.b))
+    if not ag.pairs:
+        raise ValueError("the two qrels files share no graded documents; grade the same pool twice")
+    md = markdown(ag, Path(a.a).stem if not a.names else a.names.split(",")[0],
+                  Path(a.b).stem if not a.names else a.names.split(",")[-1])
+    print(md)
+    summary = a.summary or os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as f:
+            f.write(md + "\n")
+    if a.disagreements:
+        with open(a.disagreements, "w", encoding="utf-8") as f:
+            f.write("query-id\tcorpus-id\tgrade-a\tgrade-b\n")
+            for q, d, ga, gb in ag.disagreements():
+                f.write(f"{q}\t{d}\t{ga}\t{gb}\n")
+        print(f"{len(ag.disagreements())} disagreements written to {a.disagreements}")
+    if a.min_kappa is not None:
+        k = kappa(ag.a, ag.b, "quadratic")
+        if k is None or k < a.min_kappa:
+            print(f"weighted kappa {'not defined' if k is None else f'{k:.3f}'} is below {a.min_kappa}", file=sys.stderr)
+            return 1
+    return 0
+
+
 def cmd_show(a) -> int:
     _summary(load_report(a.report))
     return 0
@@ -206,6 +237,15 @@ def build_parser() -> argparse.ArgumentParser:
     j.add_argument("--pool-out", metavar="FILE", help="write the documents to judge to FILE for judge-ui in the "
                                                     "browser instead of asking here")
     j.set_defaults(fn=cmd_judge)
+
+    ag = sub.add_parser("agree", help="how far two judges agree on the documents both graded (Cohen's kappa)")
+    ag.add_argument("a", help="qrels TSV from the first judge")
+    ag.add_argument("b", help="qrels TSV from the second judge")
+    ag.add_argument("--names", help="what to call them, e.g. 'sam,alex' (default: the file names)")
+    ag.add_argument("--disagreements", metavar="FILE", help="write every disagreement here, biggest first, to settle")
+    ag.add_argument("--min-kappa", type=float, help="exit 1 if the weighted kappa is below this")
+    ag.add_argument("--summary", help="also append the markdown here (GITHUB_STEP_SUMMARY is used if set)")
+    ag.set_defaults(fn=cmd_agree)
 
     s = sub.add_parser("show", help="print a report's numbers")
     s.add_argument("report")
