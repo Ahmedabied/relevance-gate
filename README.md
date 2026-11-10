@@ -184,6 +184,14 @@ A document returned twice counts once. Pick metrics with `--metrics ndcg@10,reca
 - **The built-in engine is a baseline**, not a product: one SQLite FTS5 table, BM25, no synonyms. Hybrid search
   with local embeddings is the next step.
 
+## Related
+
+- [judge-ui](https://github.com/Ahmedabied/judge-ui) is `judge` in a browser: the same pool file in, the same
+  qrels out, graded with the keys 2, 1 and 0.
+- [judge-bias](https://github.com/Ahmedabied/judge-bias) is for when a model grades instead of a person. It measures
+  whether an LLM judge favours answers written by its own model, with the same habit as the gate here: an interval,
+  and a check that the effect is not noise.
+
 ## Development
 
 ```sh
