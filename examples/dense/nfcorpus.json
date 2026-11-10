@@ -1,0 +1,26 @@
+{
+ "model": "BAAI/bge-small-en-v1.5",
+ "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+ "query_prefix": "Represent this sentence for searching relevant passages: ",
+ "dataset": "nfcorpus",
+ "split": "test",
+ "docs": 3633,
+ "queries": 323,
+ "k": 100,
+ "sha256": "e34a54c1d904862d4b89e04c196bbf5692a5af32676255caeadec5100a85f0fc",
+ "seconds": {
+  "docs": 457.84,
+  "queries": 1.54,
+  "search": 0.268
+ },
+ "docs_per_second": 7.9,
+ "versions": {
+  "python": "3.13.18",
+  "torch": "2.15.0+cpu",
+  "sentence_transformers": "6.2.0",
+  "transformers": "5.22.2",
+  "numpy": "2.5.4",
+  "max_seq_length": 512,
+  "cpu": "x86_64"
+ }
+}

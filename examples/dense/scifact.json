@@ -1,0 +1,26 @@
+{
+ "model": "BAAI/bge-small-en-v1.5",
+ "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+ "query_prefix": "Represent this sentence for searching relevant passages: ",
+ "dataset": "scifact",
+ "split": "test",
+ "docs": 5183,
+ "queries": 300,
+ "k": 100,
+ "sha256": "02b26889ecd1f79b86bb98495cf73ce30915266b5530bb235bff6bca3df6b5f9",
+ "seconds": {
+  "docs": 600.97,
+  "queries": 3.03,
+  "search": 0.286
+ },
+ "docs_per_second": 8.6,
+ "versions": {
+  "python": "3.13.18",
+  "torch": "2.15.0+cpu",
+  "sentence_transformers": "6.2.0",
+  "transformers": "5.22.2",
+  "numpy": "2.5.4",
+  "max_seq_length": 512,
+  "cpu": "x86_64"
+ }
+}

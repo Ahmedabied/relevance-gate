@@ -13,7 +13,8 @@ search log --sample--> queries --judge--> judged set --eval--> report --gate--> 
   found what, and asks for a grade in the terminal. Quit any time; a rerun continues where you stopped.
 - **`eval`** runs the judged queries through a search engine and writes a report: nDCG, precision, recall, MRR,
   zero-result rate and latency, per query and overall. The engine is the built-in SQLite FTS5 (BM25), your own
-  HTTP search API, or any program that reads queries on stdin.
+  HTTP search API, any program that reads queries on stdin, or a TREC run file made elsewhere. `--fuse` mixes
+  any of them with run files by reciprocal rank fusion, so keyword plus vector search is one flag.
 - **`gate`** compares a candidate report to a baseline and exits 1 if a metric dropped by more than you allow
   **and** that is unlikely to be noise: a one-sided paired randomization test over the queries, asking whether
   the true drop is bigger than the allowed one. A GitHub Action wraps it.
@@ -77,6 +78,45 @@ command takes 0.07 s. Search changes tried on SciFact:
 | AND instead of OR | 0.0467 | 0.0458 | 94.7% | FAIL (p 0.0001) |
 | title weight 3 | 0.6930 | 0.9253 | 0.0% | pass |
 
+### Keyword plus dense
+
+The dense side is [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (MIT, 33M parameters),
+run by `examples/dense/embed.py` on GitHub's machine, not here. The runs it made are committed in `examples/dense`
+(ids and scores only, 0.3 MB each), and the `dense` workflow makes them again whenever that folder changes and
+fails if the numbers move. Hybrid is the built-in BM25 fused with the dense run: k 60, equal weights, the top 100
+of each. Nothing was tuned on these queries.
+
+| dataset | metric | BM25 | dense | dense, model card | hybrid |
+|---|---|---|---|---|---|
+| SciFact | nDCG@10 | 0.6874 | 0.7127 | 0.7128 | 0.7292 |
+| SciFact | recall@100 | 0.9253 | 0.9417 | 0.9417 | 0.9683 |
+| NFCorpus | nDCG@10 | 0.3223 | 0.3438 | 0.3431 | 0.3667 |
+| NFCorpus | recall@100 | 0.2493 | 0.3110 | 0.3114 | 0.3134 |
+| NFCorpus | zero results | 4.6% | 0% | | 0% |
+
+The model card's numbers come from MTEB. The dense run lands within 0.001 of them, the same check as BM25 against
+the BEIR paper above.
+
+Better, or noise? The gate asks "did it get worse", so swap the reports to ask "is it better by more than the
+allowed 0.005": `relevance-gate gate hybrid.json base.json` fails when BM25 is worse than hybrid.
+
+| question, nDCG@10 | SciFact | NFCorpus |
+|---|---|---|
+| hybrid better than BM25? | yes, p 0.0004 (better on 77 queries, worse on 24) | yes, p 0.0001 |
+| dense better than BM25? | not shown, p 0.11 (better on 72, worse on 56) | not shown, p 0.059 |
+| hybrid better than dense? | not shown, p 0.15 (recall@100: yes, p 0.012) | yes, p 0.0055 |
+
+On SciFact, swapping BM25 for vectors moves the average up by 0.025, but 300 queries cannot show that the gain
+is beyond 0.005: dense wins on 72 queries and loses on 56. The two miss different documents, and fusion uses
+that. Hybrid wins on 77 and loses on 24. Fusion costs 34 microseconds a query (two lists of 100, Python 3.13), so
+the hybrid eval takes the same 2.0 s as BM25 alone. Embedding is the slow part: 601 s for the 5,183 SciFact
+documents on a 4-core runner, CPU only. Try it, no model needed:
+
+```sh
+relevance-gate eval --data ~/.cache/relevance-gate/scifact --fuse examples/dense/scifact.run.gz -o hybrid.json
+relevance-gate gate hybrid.json base.json         # exit 1: BM25 is worse than hybrid by more than 0.005
+```
+
 ## Use it on your own search
 
 **1. Build the judged set** from your search log (a text file with one search per line, a CSV with a `query`
@@ -138,11 +178,24 @@ Or with a program: it gets `{"qid", "query", "k"}` lines on stdin and prints `{"
 relevance-gate eval --data mysearch --engine command --cmd 'python my_search.py' -o baseline.json
 ```
 
+Adding vector search? Write its results as a run file, the TREC format most search tools can write (one line per
+result: `query-id Q0 doc-id rank score tag`, gzip is fine), then score it alone or mixed into your keyword search:
+
+```sh
+relevance-gate eval --data mysearch --engine run --run vectors.run -o dense.json
+relevance-gate eval --data mysearch --engine http --url '...' --ids '...' --fuse vectors.run -o hybrid.json
+```
+
+`--fuse` is reciprocal rank fusion: each list gives a document `weight / (k + rank)` and the sums decide the order.
+The engine's list has weight 1, `--fuse-weight` sets the run's, `--rrf-k` the constant (60, from the paper by
+Cormack, Clarke and Buettcher, 2009), `--fuse-depth` how many results each list brings (100). To fuse two live
+engines, write one of them out with `--run-out engine-a.run` and fuse that into the other.
+
 **3. Gate in CI.** Commit `baseline.json` from main. In the pull request, evaluate again and gate:
 
 ```yaml
 - run: relevance-gate eval --data mysearch --engine command --cmd 'python my_search.py' -o candidate.json
-- uses: Ahmedabied/relevance-gate@v0.2.0
+- uses: Ahmedabied/relevance-gate@v0.3.0
   with:
     baseline: baseline.json
     candidate: candidate.json
@@ -190,8 +243,11 @@ A document returned twice counts once. Pick metrics with `--metrics ndcg@10,reca
 - **Agreement is measured, not settled.** `agree` finds where two judges differ; settling it is a conversation, and
   the settled grades go back into one qrels file by hand.
 - **Latency numbers are indicative**, measured in the same process as the evaluation, not under load.
-- **The built-in engine is a baseline**, not a product: one SQLite FTS5 table, BM25, no synonyms. Hybrid search
-  with local embeddings is the next step.
+- **The built-in engine is a baseline**, not a product: one SQLite FTS5 table, BM25, no synonyms.
+- **The dense runs are fixed files.** They cover the judged queries of SciFact and NFCorpus, nothing else. Your
+  own queries or documents need the model (`examples/dense/embed.py`, about 10 minutes per 5,000 documents on
+  4 CPU cores) or your own vector search writing a run. The fusion settings were left at the paper's defaults on
+  purpose: tuning k or the weight on the same queries you report on overstates the gain. Tune on other queries.
 
 ## Related
 
@@ -205,10 +261,12 @@ A document returned twice counts once. Pick metrics with `--metrics ndcg@10,reca
 
 ```sh
 pip install -e '.[test]'
-pytest -q               # 66 tests, about 3 s
+pytest -q               # 96 tests, about 3 s
 ```
 
 Tests use a generated corpus, so CI needs no downloads. The `search-quality` workflow runs the real SciFact gate.
+The `dense` workflow tests `embed.py` with a fake encoder (`pytest examples/dense`, needs numpy), then makes the
+dense runs again with the real model (about 20 minutes) and compares them to the committed ones.
 
 Built with AI pair programming.
 
