@@ -83,7 +83,7 @@ command takes 0.07 s. Search changes tried on SciFact:
 
 The dense side is [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) (MIT, 33M parameters),
 run by `examples/dense/embed.py` on GitHub's machine, not here. The runs it made are committed in `examples/dense`
-(ids and scores only, 0.3 MB each), and the `dense` workflow makes them again whenever that folder changes and
+(ids and scores only, 0.3 to 0.8 MB each), and the `dense` workflow makes them again whenever that folder changes and
 fails if the numbers move. Hybrid is the built-in BM25 fused with the dense run: k 60, equal weights, the top 100
 of each. Nothing was tuned on these queries.
 
@@ -112,8 +112,8 @@ On SciFact, swapping BM25 for vectors moves the average up by 0.025, but 300 que
 is beyond 0.005: dense wins on 72 queries and loses on 56. The two miss different documents, and fusion uses
 that. Hybrid wins on 77 and loses on 24. Fusion costs 34 microseconds a query (two lists of 100, Python 3.13), so
 the hybrid eval takes the same 2.0 s as BM25 alone. Embedding is the slow part: 601 s for the 5,183 SciFact
-documents on a 4-core runner, CPU only (757 s on another run). Runs made on two different runners gave the same
-top 10 for all 623 queries, scores within 0.000002. Try it, no model needed:
+documents on a 4-core runner, CPU only (757 s on another run). Every rerun so far, on different runners, gave the
+same top 10 for every query (1,756 across the four runs), scores within 0.000002. Try it, no model needed:
 
 ```sh
 relevance-gate eval --data ~/.cache/relevance-gate/scifact --fuse examples/dense/scifact.run.gz -o hybrid.json
