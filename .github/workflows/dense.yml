@@ -76,8 +76,6 @@ jobs:
           done
           for held in scifact:train nfcorpus:dev; do
             ds=${held%%:*} split=${held##*:}
-            if [ -f "examples/dense/$ds-$split.run.gz" ]; then
-              python examples/dense/same.py --data "$data/$ds" --split "$split" \
-                "examples/dense/$ds-$split.run.gz" "out/$ds-$split.run.gz"
-            fi
+            python examples/dense/same.py --data "$data/$ds" --split "$split" \
+              "examples/dense/$ds-$split.run.gz" "out/$ds-$split.run.gz"
           done

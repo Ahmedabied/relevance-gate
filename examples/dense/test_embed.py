@@ -111,3 +111,24 @@ def test_train_split_ranks_its_own_queries(data, tmp_path):
     out = tmp_path / "train.run"
     embed.main(["--data", str(data), "--split", "train", "-o", str(out)], encoder=fake_encode)
     assert {line.split()[0] for line in out.read_text().splitlines()} == {"q9"}
+
+
+tune_spec = importlib.util.spec_from_file_location("tune", Path(__file__).with_name("tune.py"))
+tune = importlib.util.module_from_spec(tune_spec)
+tune_spec.loader.exec_module(tune)
+
+
+def test_tune_refuses_the_test_split(data, tmp_path):
+    with pytest.raises(SystemExit, match="avoid"):
+        tune.main(["--data", str(data), "--split", "test", "--dense", str(tmp_path / "x.run")])
+
+
+def test_tune_grid_on_held_out_queries(data, tmp_path, capsys):
+    (data / "qrels" / "train.tsv").write_text("query-id\tcorpus-id\tscore\nq9\td3\t1\n")
+    with open(data / "queries.jsonl", "a") as f:
+        f.write(json.dumps({"_id": "q9", "text": "zinc"}) + "\n")
+    run = tmp_path / "train.run"
+    run.write_text("q9 Q0 d3 1 0.9 x\nq9 Q0 d4 2 0.5 x\n")
+    assert tune.main(["--data", str(data), "--split", "train", "--dense", str(run)]) == 0
+    out = capsys.readouterr().out
+    assert "1 queries" in out and out.count("\n| ") == len(tune.KS) + 1 and "best: k" in out

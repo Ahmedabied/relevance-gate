@@ -118,6 +118,21 @@ relevance-gate eval --data ~/.cache/relevance-gate/scifact --fuse examples/dense
 relevance-gate gate hybrid.json base.json         # exit 1: BM25 is worse than hybrid by more than 0.005
 ```
 
+Tuning, done on other queries. k 60 and equal weights are the paper's defaults. To pick them from data instead,
+`examples/dense/tune.py` scores 56 settings (k 5 to 200, run weight 0.25 to 4) on queries that are never
+reported: SciFact's 809 train queries and NFCorpus's 324 dev queries (their dense runs are committed too; a grid
+takes 1 to 3 s). Only the winner is then scored on test:
+
+| nDCG@10 | SciFact | NFCorpus |
+|---|---|---|
+| best on the held-out queries | k 5, weight 2 | k 20, weight 1 |
+| its gain there over k 60, weight 1 | +0.0127 | +0.0029 |
+| its gain on test | +0.0023 | +0.0005 |
+| what the same grid claims when run on test itself | +0.0070 | +0.0026 |
+
+On test the tuned settings move nDCG@10 by less than the 0.005 the gate treats as no change, so the defaults
+stay. Picking the best of 56 on the queries you report would have shown three to five times the real gain.
+
 ## Use it on your own search
 
 **1. Build the judged set** from your search log (a text file with one search per line, a CSV with a `query`
