@@ -128,8 +128,8 @@ relevance-gate judge --data mysearch --url 'http://localhost:8000/search?q={quer
 ```
 
 `judge` writes `mysearch/qrels/test.tsv`. Give it a `corpus.jsonl` too (`{"_id", "title", "text"}`) and it shows
-each document's text, and can pool extra FTS5 configs with `--pool 'tokenizer=unicode61'` so the judged set is
-not shaped by one engine alone. 150 queries with 10 results each is a few hours of judging, once.
+each document's text, and can pool extra FTS5 configs with `--pool 'tokenizer=unicode61'` and a run file from any
+other engine with `--pool-run vectors.run`, so the judged set is not shaped by one engine alone. 150 queries with 10 results each is a few hours of judging, once.
 
 Rather grade in the browser? Add `--pool-out pool.jsonl` and `judge` writes the documents still to grade instead
 of asking. Open that file in [judge-ui](https://github.com/Ahmedabied/judge-ui) (keys 2, 1, 0; progress kept in
@@ -217,14 +217,18 @@ the same pull request, so the new baseline is reviewed like code. A full working
 | `mrr@K` | 1 / rank of the first relevant result |
 | `hit@K` | 1 if anything relevant is in the top K |
 | `zero_results` | share of queries with no results at all (lower is better) |
+| `unjudged@K` | share of the top K places holding a document nobody graded (lower is better; high means the scores are a lower bound) |
 
 A document returned twice counts once. Pick metrics with `--metrics ndcg@10,recall@100,zero_results`.
 
 ## Limits
 
 - **Judgments are the expensive part, and they age.** The gate is only as good as the judged set. Unjudged
-  documents count as not relevant, so a new engine that finds good documents nobody judged scores too low. Judge
-  again with `judge --pool` including the new engine when that happens.
+  documents count as not relevant, so a new engine that finds good documents nobody judged scores too low. Every
+  report carries `unjudged@10`, and the gate prints a note when the candidate's is 5 points or more above the
+  baseline's. Then pool the new engine and judge again: `eval --run-out new.run`, then `judge --pool-run new.run`.
+  BEIR's SciFact qrels list only relevant documents, so about 91% of any engine's top 10 there is unjudged; on a
+  set like that the number only means something as a difference.
 - **Small sets cannot see small changes.** On the 300 SciFact queries the gate caught a 0.039 recall drop
   (p 0.003) but could not show that a 0.018 nDCG drop was beyond the allowed 0.005 (p 0.10). Under about 50
   queries it says so in its output. More judged queries make smaller drops visible. How often it fails, in
@@ -261,7 +265,7 @@ A document returned twice counts once. Pick metrics with `--metrics ndcg@10,reca
 
 ```sh
 pip install -e '.[test]'
-pytest -q               # 96 tests, about 3 s
+pytest -q               # 103 tests, about 3 s
 ```
 
 Tests use a generated corpus, so CI needs no downloads. The `search-quality` workflow runs the real SciFact gate.

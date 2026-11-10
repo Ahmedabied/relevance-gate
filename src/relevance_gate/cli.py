@@ -137,6 +137,27 @@ def _count(n: int, one: str, many: str | None = None) -> str:
     return f"{n} {one if n == 1 else many or one + 's'}"
 
 
+def _run_searcher(path, root):
+    """A run file as a judge pool: the judged set's queries are matched to the run by id, through their text."""
+    from .data import _jsonl
+    from .runs import load_run
+
+    run, _ = load_run(path)
+    ids_by_text: dict[str, list[str]] = {}
+    for q in _jsonl(Path(root) / "queries.jsonl"):
+        ids_by_text.setdefault(str(q.get("text", "")), []).append(str(q.get("_id")))
+    if not any(q in run for ids in ids_by_text.values() for q in ids):
+        raise EngineError(f"{Path(path).name} has none of the queries in {Path(root) / 'queries.jsonl'}")
+
+    def search(text: str, k: int) -> list[str]:
+        out: list[str] = []
+        for qid in ids_by_text.get(text, []):
+            out += [d for d in run.get(qid, [])[:k] if d not in out]
+        return out[:k]
+
+    return search
+
+
 def cmd_judge(a) -> int:
     from .data import _jsonl
     from .judging import judge
@@ -159,7 +180,12 @@ def cmd_judge(a) -> int:
         if not a.ids:
             raise ValueError("--url needs --ids")
         searchers.append(HttpEngine(a.url, a.ids).search)
-    if a.pool or not a.url:
+    for f in a.pool_run or []:
+        searchers.append(_run_searcher(f, root))
+    if a.pool == ["none"]:
+        if not searchers:
+            raise ValueError("--pool none leaves nothing to pool; add --pool-run or --url")
+    elif a.pool or not a.url:
         if not (root / "corpus.jsonl").exists():
             raise ValueError(f"{root}: the fts5 pool needs corpus.jsonl; or pool from your engine with --url")
         docs = {str(d["_id"]): (str(d.get("title") or ""), str(d.get("text") or "")) for d in _jsonl(root / "corpus.jsonl")}
@@ -274,8 +300,11 @@ def build_parser() -> argparse.ArgumentParser:
     j = sub.add_parser("judge", help="grade pooled results for each query in the terminal; writes qrels")
     j.add_argument("--data", required=True, help="folder with queries.jsonl (and corpus.jsonl for the fts5 pool)")
     j.add_argument("--pool", action="append", metavar="OPTS",
-                   help="an fts5 config to pool from, e.g. 'tokenizer=unicode61,mode=and'; repeat for more")
+                   help="an fts5 config to pool from, e.g. 'tokenizer=unicode61,mode=and'; repeat for more; 'none' for no fts5 pool")
     j.add_argument("--url", help="also pool from your engine (URL with {query})")
+    j.add_argument("--pool-run", action="append", metavar="RUN",
+                   help="also pool the results in this TREC run file, e.g. a new engine's eval --run-out "
+                        "(repeatable; add --pool none to leave out the fts5 pool)")
     j.add_argument("--ids", help="where the ids are in your engine's JSON")
     j.add_argument("--depth", type=int, default=10, help="top results per config to pool (default 10)")
     j.add_argument("-o", "--output", help="qrels file (default DATA/qrels/test.tsv)")

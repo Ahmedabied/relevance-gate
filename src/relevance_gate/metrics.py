@@ -61,22 +61,30 @@ def zero_results(ranked: Ranked, judged: Judged, k: int) -> float:
     return 0.0 if ranked else 1.0
 
 
-FUNCS: dict[str, Callable] = {"ndcg": ndcg, "p": precision, "recall": recall, "mrr": mrr, "hit": hit}
-LOWER_IS_BETTER = {"zero_results"}
-DEFAULT = ["ndcg@10", "p@10", "recall@100", "mrr@10", "zero_results"]
+def unjudged(ranked: Ranked, judged: Judged, k: int) -> float:
+    """Share of the top K places holding a document nobody graded. A grade of 0 is a judgment; an empty place
+    (fewer than K results) is not an unjudged document. High means the scores are a lower bound."""
+    return sum(1 for d in ranked[:k] if d not in judged) / k
+
+
+FUNCS: dict[str, Callable] = {"ndcg": ndcg, "p": precision, "recall": recall, "mrr": mrr, "hit": hit,
+                              "unjudged": unjudged}
+LOWER_IS_BETTER = {"zero_results", "unjudged"}
+DEFAULT = ["ndcg@10", "p@10", "recall@100", "mrr@10", "zero_results", "unjudged@10"]
 
 
 def parse(name: str) -> tuple[Callable, int]:
     if name == "zero_results":
         return zero_results, 0
-    m = re.fullmatch(r"(ndcg|p|recall|mrr|hit)@(\d+)", name)
+    m = re.fullmatch(r"(ndcg|p|recall|mrr|hit|unjudged)@(\d+)", name)
     if not m or int(m.group(2)) < 1:
-        raise ValueError(f"unknown metric {name!r}; use ndcg@K, p@K, recall@K, mrr@K, hit@K or zero_results")
+        raise ValueError(f"unknown metric {name!r}; use ndcg@K, p@K, recall@K, mrr@K, hit@K, unjudged@K "
+                         "or zero_results")
     return FUNCS[m.group(1)], int(m.group(2))
 
 
 def higher_is_better(name: str) -> bool:
-    return name not in LOWER_IS_BETTER
+    return name.split("@")[0] not in LOWER_IS_BETTER
 
 
 def score(ranked: Ranked, judged: Judged, names: list[str]) -> dict[str, float]:

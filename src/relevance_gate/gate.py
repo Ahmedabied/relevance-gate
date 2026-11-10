@@ -166,4 +166,29 @@ def markdown(checks: list[Check], info: dict, base: dict, cand: dict, alpha: flo
         lines += [f"- `{q}` {d:+.3f}: {text[:90]}" for q, d, text in best]
     if info["shared"] < 50:
         lines += ["", f"Only {info['shared']} queries: small drops cannot be told apart from noise. Judge more queries."]
+    note = unjudged_note(base, cand)
+    if note:
+        lines += ["", note]
     return "\n".join(lines) + "\n"
+
+
+UNJUDGED_GAP = 0.05  # note it when the candidate shows this much more of its top 10 unjudged than the baseline
+
+
+def unjudged_note(base: dict, cand: dict, metric: str = "unjudged@10") -> str:
+    """A warning when the candidate's results hold clearly more ungraded documents than the baseline's.
+
+    Ungraded counts as not relevant, so such a candidate is scored low by construction: a new engine that
+    finds good documents nobody has graded yet looks worse than it is. Reports made before the metric
+    existed have no such field, and nothing is said."""
+    shared = sorted(set(base["per_query"]) & set(cand["per_query"]))
+    if not shared or any(metric not in r["per_query"][q] for r in (base, cand) for q in shared):
+        return ""
+    b = statistics.fmean(base["per_query"][q][metric] for q in shared)
+    c = statistics.fmean(cand["per_query"][q][metric] for q in shared)
+    if c - b < UNJUDGED_GAP:
+        return ""
+    return (f"Note: {c:.0%} of the candidate's top 10 places hold documents nobody graded, against {b:.0%} for the "
+            "baseline. Ungraded counts as not relevant, so the candidate's scores are a lower bound. Grade them "
+            "first: write its results with `eval --run-out candidate.run`, pool them with "
+            "`judge --pool-run candidate.run`, then evaluate both again.")
