@@ -79,3 +79,35 @@ def test_ties_go_to_the_lower_document_index():
     docs = np.array([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
     ranked = embed.top_k(docs, np.array([[1.0, 0.0]], dtype=np.float32), 2)
     assert [d for d, _ in ranked[0]] == [0, 1]
+
+
+def test_doc_cache_embeds_the_documents_once(data, tmp_path):
+    seen = []
+
+    def counting(texts):
+        seen.append(len(texts))
+        return fake_encode(texts)
+
+    cache = tmp_path / "docs.npy"
+    embed.main(["--data", str(data), "-o", str(tmp_path / "a.run"), "--doc-cache", str(cache)], encoder=counting)
+    assert seen == [4, 2] and cache.exists()  # documents, then queries
+    seen.clear()
+    embed.main(["--data", str(data), "-o", str(tmp_path / "b.run"), "--doc-cache", str(cache)], encoder=counting)
+    assert seen == [2]  # queries only
+    assert (tmp_path / "a.run").read_bytes() == (tmp_path / "b.run").read_bytes()
+
+
+def test_doc_cache_from_another_corpus_is_refused(data, tmp_path):
+    cache = tmp_path / "docs.npy"
+    embed.main(["--data", str(data), "-o", str(tmp_path / "a.run"), "--doc-cache", str(cache)], encoder=fake_encode)
+    with open(data / "corpus.jsonl", "a") as f:
+        f.write(json.dumps({"_id": "d5", "title": "", "text": "new"}) + "\n")
+    with pytest.raises(SystemExit, match="another corpus"):
+        embed.main(["--data", str(data), "-o", str(tmp_path / "b.run"), "--doc-cache", str(cache)], encoder=fake_encode)
+
+
+def test_train_split_ranks_its_own_queries(data, tmp_path):
+    (data / "qrels" / "train.tsv").write_text("query-id\tcorpus-id\tscore\nq9\td2\t1\n")
+    out = tmp_path / "train.run"
+    embed.main(["--data", str(data), "--split", "train", "-o", str(out)], encoder=fake_encode)
+    assert {line.split()[0] for line in out.read_text().splitlines()} == {"q9"}

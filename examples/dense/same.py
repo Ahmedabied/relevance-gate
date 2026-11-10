@@ -19,15 +19,16 @@ from relevance_gate.gate import evaluate
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--data", required=True)
+    p.add_argument("--split", default="test")
     p.add_argument("committed")
     p.add_argument("fresh")
     p.add_argument("--tolerance", type=float, default=0.002)
     a = p.parse_args(argv)
-    ds = load(a.data, with_corpus=False)
+    ds = load(a.data, a.split, with_corpus=False)
     runs = [RunEngine(a.committed), RunEngine(a.fresh)]
     reports = [evaluate(r, ds, query_text=False) for r in runs]
     same10 = sum(runs[0].run.get(q, [])[:10] == runs[1].run.get(q, [])[:10] for q in ds.queries)
-    print(f"{ds.name}: top 10 identical for {same10} of {len(ds.queries)} queries")
+    print(f"{ds.name} {a.split}: top 10 identical for {same10} of {len(ds.queries)} queries")
     bad = 0
     for name, x in reports[0]["metrics"].items():
         y = reports[1]["metrics"][name]

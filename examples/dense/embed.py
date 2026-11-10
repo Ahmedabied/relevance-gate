@@ -87,6 +87,32 @@ def write(path: Path, text: str) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def cached_docs(path: str, corpus_sha: str, n: int):
+    """The cached document vectors, or None when there is no cache yet. A cache made from another corpus
+    (or another model) is refused, never silently used."""
+    import numpy as np
+
+    vecs, meta = Path(path), Path(path + ".json")
+    if not vecs.exists():
+        return None
+    info = json.loads(meta.read_text(encoding="utf-8")) if meta.exists() else {}
+    if info.get("corpus_sha256") != corpus_sha or info.get("model") != MODEL or info.get("revision") != REVISION:
+        raise SystemExit(f"{path} was made from another corpus or model; delete it or pass another --doc-cache")
+    out = np.load(vecs, allow_pickle=False)
+    if out.shape[0] != n:
+        raise SystemExit(f"{path} holds {out.shape[0]} vectors for {n} documents")
+    return out
+
+
+def save_docs(path: str, corpus_sha: str, vecs) -> None:
+    import numpy as np
+
+    with open(path, "wb") as f:
+        np.save(f, vecs, allow_pickle=False)
+    Path(path + ".json").write_text(json.dumps({"corpus_sha256": corpus_sha, "model": MODEL, "revision": REVISION}),
+                                    encoding="utf-8")
+
+
 def model_encoder(batch_size: int = 32):
     import numpy
     import sentence_transformers
@@ -116,6 +142,8 @@ def main(argv=None, encoder=None) -> int:
     p.add_argument("-o", "--output", required=True, help="run file to write (.gz to compress)")
     p.add_argument("--meta", help="also write what made the run (model, versions, timings) as JSON here")
     p.add_argument("--batch-size", type=int, default=32)
+    p.add_argument("--doc-cache", help="keep the document vectors in this .npy file and reuse them when it exists, "
+                                       "so another split's queries do not embed the corpus again")
     a = p.parse_args(argv)
 
     doc_ids, doc_texts, qids, qtexts = load(Path(a.data).expanduser(), a.split)
@@ -123,8 +151,14 @@ def main(argv=None, encoder=None) -> int:
         encode, versions = model_encoder(a.batch_size)
     else:
         encode, versions = encoder, {"encoder": "test"}
+    corpus_sha = hashlib.sha256("\0".join(doc_ids + doc_texts).encode("utf-8")).hexdigest()
     t0 = time.perf_counter()
-    doc_vecs = encode(doc_texts)
+    doc_vecs = cached_docs(a.doc_cache, corpus_sha, len(doc_ids)) if a.doc_cache else None
+    cached = doc_vecs is not None
+    if not cached:
+        doc_vecs = encode(doc_texts)
+        if a.doc_cache:
+            save_docs(a.doc_cache, corpus_sha, doc_vecs)
     t1 = time.perf_counter()
     query_vecs = encode([QUERY_PREFIX + q for q in qtexts])
     t2 = time.perf_counter()
@@ -134,7 +168,8 @@ def main(argv=None, encoder=None) -> int:
     meta = {"model": MODEL, "revision": REVISION, "query_prefix": QUERY_PREFIX, "dataset": Path(a.data).name,
             "split": a.split, "docs": len(doc_ids), "queries": len(qids), "k": a.k, "sha256": sha,
             "seconds": {"docs": round(t1 - t0, 2), "queries": round(t2 - t1, 2), "search": round(t3 - t2, 3)},
-            "docs_per_second": round(len(doc_ids) / max(t1 - t0, 1e-9), 1), "versions": versions}
+            "docs_per_second": None if cached else round(len(doc_ids) / max(t1 - t0, 1e-9), 1),
+            "docs_from_cache": cached, "versions": versions}
     if a.meta:
         Path(a.meta).write_text(json.dumps(meta, indent=1) + "\n", encoding="utf-8")
     print(json.dumps(meta), file=sys.stderr)

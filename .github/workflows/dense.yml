@@ -38,8 +38,16 @@ jobs:
           mkdir -p out
           for ds in scifact nfcorpus; do
             data=$(relevance-gate fetch "$ds")
-            python examples/dense/embed.py --data "$data" -o "out/$ds.run.gz" --meta "out/$ds.json"
+            python examples/dense/embed.py --data "$data" -o "out/$ds.run.gz" --meta "out/$ds.json" \
+              --doc-cache "$RUNNER_TEMP/$ds-docs.npy"
           done
+      - name: Queries held out for tuning (SciFact train, NFCorpus dev), documents from the cache
+        run: |
+          data="$HOME/.cache/relevance-gate"
+          python examples/dense/embed.py --data "$data/scifact" --split train -o out/scifact-train.run.gz \
+            --meta out/scifact-train.json --doc-cache "$RUNNER_TEMP/scifact-docs.npy"
+          python examples/dense/embed.py --data "$data/nfcorpus" --split dev -o out/nfcorpus-dev.run.gz \
+            --meta out/nfcorpus-dev.json --doc-cache "$RUNNER_TEMP/nfcorpus-docs.npy"
       - name: Score BM25, dense and hybrid
         run: |
           for ds in scifact nfcorpus; do
@@ -62,7 +70,14 @@ jobs:
           path: out/
       - name: Same numbers as the committed runs
         run: |
+          data="$HOME/.cache/relevance-gate"
           for ds in scifact nfcorpus; do
-            python examples/dense/same.py --data "$HOME/.cache/relevance-gate/$ds" \
-              "examples/dense/$ds.run.gz" "out/$ds.run.gz"
+            python examples/dense/same.py --data "$data/$ds" "examples/dense/$ds.run.gz" "out/$ds.run.gz"
+          done
+          for held in scifact:train nfcorpus:dev; do
+            ds=${held%%:*} split=${held##*:}
+            if [ -f "examples/dense/$ds-$split.run.gz" ]; then
+              python examples/dense/same.py --data "$data/$ds" --split "$split" \
+                "examples/dense/$ds-$split.run.gz" "out/$ds-$split.run.gz"
+            fi
           done
