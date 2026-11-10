@@ -281,7 +281,7 @@ A document returned twice counts once. Pick metrics with `--metrics ndcg@10,reca
 
 ```sh
 pip install -e '.[test]'
-pytest -q               # 103 tests, about 3 s
+pytest -q               # 106 tests, about 3 s
 ```
 
 Tests use a generated corpus, so CI needs no downloads. The `search-quality` workflow runs the real SciFact gate.

@@ -72,7 +72,7 @@ def cmd_eval(a) -> int:
     if a.output:
         Path(a.output).write_text(text + "\n", encoding="utf-8")
     if a.run_out:
-        write_run(ranked, a.run_out, engine.name)
+        write_run(ranked, a.run_out, engine.name + ("+rrf" if fused else ""))
     _summary(report)
     return 0
 
@@ -182,12 +182,15 @@ def cmd_judge(a) -> int:
         searchers.append(HttpEngine(a.url, a.ids).search)
     for f in a.pool_run or []:
         searchers.append(_run_searcher(f, root))
+    if a.pool and "none" in a.pool and a.pool != ["none"]:
+        raise ValueError("--pool none cannot be combined with other --pool configs")
     if a.pool == ["none"]:
         if not searchers:
             raise ValueError("--pool none leaves nothing to pool; add --pool-run or --url")
     elif a.pool or not a.url:
         if not (root / "corpus.jsonl").exists():
-            raise ValueError(f"{root}: the fts5 pool needs corpus.jsonl; or pool from your engine with --url")
+            raise ValueError(f"{root}: the fts5 pool needs corpus.jsonl; or pool from your engine with --url or "
+                             "--pool-run, and add --pool none")
         docs = {str(d["_id"]): (str(d.get("title") or ""), str(d.get("text") or "")) for d in _jsonl(root / "corpus.jsonl")}
         for spec in a.pool or [""]:
             o = _opts([x for x in spec.split(",") if x.strip()])

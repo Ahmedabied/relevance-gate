@@ -187,3 +187,12 @@ def test_write_run_scores_fall_with_rank(tmp_path):
     p = tmp_path / "w.run"
     write_run({"q2": ["b"], "q1": ["a", "c"]}, p, "t")
     assert p.read_text() == "q1 Q0 a 1 2 t\nq1 Q0 c 2 1 t\nq2 Q0 b 1 1 t\n"
+
+
+def test_a_fused_run_out_says_it_was_fused(toy, tmp_path):
+    run = tmp_path / "fts5.run"
+    assert main(["eval", "--data", str(toy), "--run-out", str(run)]) == 0
+    fused = tmp_path / "fused.run"
+    assert main(["eval", "--data", str(toy), "--fuse", str(run), "--run-out", str(fused)]) == 0
+    assert run.read_text().split("\n", 1)[0].endswith(" fts5")
+    assert fused.read_text().split("\n", 1)[0].endswith(" fts5+rrf")

@@ -91,3 +91,21 @@ def test_judge_asks_for_run_documents_in_the_terminal(tmp_path):
     assert stats["judged"] == 1 and load_qrels(out)["q2"] == {"9": 1}
     stats = write_pool(root, [_run_searcher(run, root)], 10, out, tmp_path / "left.jsonl")
     assert stats["documents"] == 0
+
+
+def test_pool_none_with_other_pools_is_refused_plainly(tmp_path, capsys):
+    root = _data(tmp_path)
+    assert main(["judge", "--data", str(root), "--pool", "none", "--pool", "mode=and",
+                 "--pool-out", str(tmp_path / "p.jsonl")]) == 2
+    assert "--pool none cannot be combined" in capsys.readouterr().err
+
+
+def test_no_corpus_points_at_pool_run(tmp_path, capsys):
+    root = _data(tmp_path)
+    (root / "corpus.jsonl").unlink()
+    run = tmp_path / "vectors.run"
+    run.write_text("q1 Q0 9 1 0.9 v\n")
+    assert main(["judge", "--data", str(root), "--pool-run", str(run), "--pool-out", str(tmp_path / "p.jsonl")]) == 2
+    assert "--pool none" in capsys.readouterr().err
+    assert main(["judge", "--data", str(root), "--pool-run", str(run), "--pool", "none",
+                 "--pool-out", str(tmp_path / "p.jsonl")]) == 0
