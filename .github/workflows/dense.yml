@@ -1,0 +1,46 @@
+# Makes the dense runs in examples/dense with an open embedding model, on GitHub's machine.
+# Runs only when examples/dense or this file changes. The runs it makes are uploaded as an artifact;
+# when the committed runs exist, it scores both and fails if they do not give the same numbers.
+name: dense
+
+on:
+  push:
+    branches: [main]
+    paths: ["examples/dense/**", ".github/workflows/dense.yml"]
+  pull_request:
+    paths: ["examples/dense/**", ".github/workflows/dense.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  embed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/relevance-gate
+          key: beir-scifact-nfcorpus-536e1444-efe5be03
+      - name: Install (CPU-only torch, pinned)
+        run: |
+          python -m pip install -e '.[test]'
+          python -m pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install sentence-transformers==6.2.0 transformers==5.22.2 numpy==2.5.4
+      - name: Test embed.py with a fake encoder
+        run: pytest -q examples/dense
+      - name: Embed SciFact and NFCorpus
+        run: |
+          mkdir -p out
+          for ds in scifact nfcorpus; do
+            data=$(relevance-gate fetch "$ds")
+            python examples/dense/embed.py --data "$data" -o "out/$ds.run.gz" --meta "out/$ds.json"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dense-runs
+          path: out/
