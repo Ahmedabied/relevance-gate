@@ -213,7 +213,7 @@ engines, write one of them out with `--run-out engine-a.run` and fuse that into 
 
 ```yaml
 - run: relevance-gate eval --data mysearch --engine command --cmd 'python my_search.py' -o candidate.json
-- uses: Ahmedabied/relevance-gate@v0.3.0
+- uses: Ahmedabied/relevance-gate@v0.4.0
   with:
     baseline: baseline.json
     candidate: candidate.json

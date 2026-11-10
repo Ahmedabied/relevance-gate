@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "relevance-gate"
-version = "0.3.0"
+version = "0.4.0"
 description = "Search evals that block regressions in CI: judged queries, nDCG, precision, zero-result rate, and a gate that fails the pull request when search gets worse."
 readme = "README.md"
 license = "MIT"
