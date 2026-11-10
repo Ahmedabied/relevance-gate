@@ -152,3 +152,45 @@ def test_cli_errors_are_clear(toy, tmp_path):
     other.write_text(json.dumps({"version": 1, "per_query": {"x": {"ndcg@10": 0.0}}}))
     r = cli("gate", str(base), str(other))
     assert r.returncode == 2 and "cannot be compared" in r.stderr
+
+
+from relevance_gate.gate import gains  # noqa: E402
+
+
+def test_a_clear_gain_is_shown():
+    base, cand = report([0.5 + 0.01 * (i % 7) for i in range(200)]), report([0.56 + 0.01 * (i % 7) for i in range(200)])
+    g = gains(base, cand, {"ndcg@10": 0.005})[0]
+    assert g.shown and g.p < 0.001 and abs(g.delta - 0.06) < 1e-9
+
+
+def test_a_gain_inside_the_needed_one_is_not_shown():
+    g = gains(report([0.5] * 200), report([0.503] * 200), {"ndcg@10": 0.005})[0]
+    assert not g.shown and g.p == 1.0
+
+
+def test_a_gain_on_few_queries_is_not_significant():
+    g = gains(report([0.1, 0.5, 0.4, 0.6, 0.5]), report([0.9, 0.4, 0.5, 0.5, 0.5]), {"ndcg@10": 0.005})[0]
+    assert g.delta > 0.005 and not g.shown and g.p > 0.05
+
+
+def test_a_lower_is_better_gain_goes_down():
+    base = report([1.0] * 30 + [0.0] * 170, "zero_results")
+    cand = report([0.0] * 200, "zero_results")
+    g = gains(base, cand, {"zero_results": 0.005})[0]
+    assert g.shown and g.delta < 0
+
+
+def test_gate_require_gain_on_the_command_line(tmp_path, capsys):
+    from relevance_gate.cli import main
+
+    b, c = tmp_path / "b.json", tmp_path / "c.json"
+    b.write_text(json.dumps(report([0.5 + 0.01 * (i % 7) for i in range(196)])))
+    c.write_text(json.dumps(report([0.56 + 0.01 * (i % 7) for i in range(196)])))
+    assert main(["gate", str(b), str(c), "--fail-on", "ndcg@10=0.005", "--require-gain", "ndcg@10=0.005"]) == 0
+    out = capsys.readouterr().out
+    assert "### relevance-gate: pass" in out and "| ndcg@10 | 0.5300 | 0.5900 | +0.0600 | 0.005 |" in out and "shown" in out
+    assert main(["gate", str(b), str(c), "--fail-on", "ndcg@10=0.005", "--require-gain", "ndcg@10=0.1"]) == 1
+    assert "FAIL, the gain is not shown" in capsys.readouterr().out
+    # a drop still fails even when a gain is asked for
+    assert main(["gate", str(c), str(b), "--fail-on", "ndcg@10=0.005", "--require-gain", "ndcg@10=0.005"]) == 1
+    assert "FAIL, search got worse" in capsys.readouterr().out

@@ -17,7 +17,8 @@ search log --sample--> queries --judge--> judged set --eval--> report --gate--> 
   any of them with run files by reciprocal rank fusion, so keyword plus vector search is one flag.
 - **`gate`** compares a candidate report to a baseline and exits 1 if a metric dropped by more than you allow
   **and** that is unlikely to be noise: a one-sided paired randomization test over the queries, asking whether
-  the true drop is bigger than the allowed one. A GitHub Action wraps it.
+  the true drop is bigger than the allowed one. `--require-gain` turns the same test around for a change that
+  must prove it is better. A GitHub Action wraps it.
 - **`agree`** checks that two judges grade alike before you trust the set: Cohen's kappa (plain, weighted for
   graded relevance, and relevant-or-not) with a bootstrap interval over queries (a query's documents are not
   independent), the grade table, and the documents they disagree on most, to settle first.
@@ -97,8 +98,9 @@ of each. Nothing was tuned on these queries.
 The model card's numbers come from MTEB. The dense run lands within 0.001 of them, the same check as BM25 against
 the BEIR paper above.
 
-Better, or noise? The gate asks "did it get worse", so swap the reports to ask "is it better by more than the
-allowed 0.005": `relevance-gate gate hybrid.json base.json` fails when BM25 is worse than hybrid.
+Better, or noise? `--require-gain` asks the other question, with the same test pointed the other way: is the
+candidate better by more than the gain you need (0.005 here), beyond noise? Use it when a change has to earn its
+cost, as an embedding model does.
 
 | question, nDCG@10 | SciFact | NFCorpus |
 |---|---|---|
@@ -115,7 +117,7 @@ top 10 for all 623 queries, scores within 0.000002. Try it, no model needed:
 
 ```sh
 relevance-gate eval --data ~/.cache/relevance-gate/scifact --fuse examples/dense/scifact.run.gz -o hybrid.json
-relevance-gate gate hybrid.json base.json         # exit 1: BM25 is worse than hybrid by more than 0.005
+relevance-gate gate base.json hybrid.json --require-gain ndcg@10=0.005    # pass: better by more, p 0.0004
 ```
 
 Tuning, done on other queries. k 60 and equal weights are the paper's defaults. To pick them from data instead,
@@ -281,7 +283,7 @@ A document returned twice counts once. Pick metrics with `--metrics ndcg@10,reca
 
 ```sh
 pip install -e '.[test]'
-pytest -q               # 106 tests, about 3 s
+pytest -q               # 111 tests, about 3 s
 ```
 
 Tests use a generated corpus, so CI needs no downloads. The `search-quality` workflow runs the real SciFact gate.

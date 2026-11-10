@@ -105,8 +105,7 @@ class Check:
 MIN_SHARED = 0.5  # share of the baseline's judged queries the candidate must also have
 
 
-def compare(base: dict, cand: dict, tolerances: dict[str, float], alpha: float = 0.05,
-            rounds: int = 10000) -> tuple[list[Check], dict]:
+def _shared(base: dict, cand: dict) -> tuple[list[str], dict]:
     shared = sorted(set(base["per_query"]) & set(cand["per_query"]))
     info = {"shared": len(shared), "only_baseline": len(set(base["per_query"]) - set(cand["per_query"])),
             "only_candidate": len(set(cand["per_query"]) - set(base["per_query"]))}
@@ -114,13 +113,21 @@ def compare(base: dict, cand: dict, tolerances: dict[str, float], alpha: float =
     if not shared or len(shared) < MIN_SHARED * n_base:
         raise ValueError(f"the reports share {len(shared)} of the baseline's {n_base} judged queries, so they cannot be "
                          "compared. Were both made from the same judged set? Re-run the baseline if the set changed.")
+    return shared, info
+
+
+def _paired(base: dict, cand: dict, shared: list[str], metric: str) -> tuple[list[float], list[float]]:
+    if any(metric not in r["per_query"][shared[0]] for r in (base, cand)):
+        raise ValueError(f"metric {metric} is not in both reports; evaluate with --metrics including it")
+    return [base["per_query"][q][metric] for q in shared], [cand["per_query"][q][metric] for q in shared]
+
+
+def compare(base: dict, cand: dict, tolerances: dict[str, float], alpha: float = 0.05,
+            rounds: int = 10000) -> tuple[list[Check], dict]:
+    shared, info = _shared(base, cand)
     checks = []
     for metric, tol in tolerances.items():
-        missing = [r for r in (base, cand) if shared and metric not in r["per_query"][shared[0]]]
-        if missing:
-            raise ValueError(f"metric {metric} is not in both reports; evaluate with --metrics including it")
-        a = [base["per_query"][q][metric] for q in shared]
-        b = [cand["per_query"][q][metric] for q in shared]
+        a, b = _paired(base, cand, shared, metric)
         ma = statistics.fmean(a) if a else 0.0
         mb = statistics.fmean(b) if b else 0.0
         delta = mb - ma
@@ -129,6 +136,37 @@ def compare(base: dict, cand: dict, tolerances: dict[str, float], alpha: float =
         p = drop_p_value(a, b, tol, up, rounds) if worse else 1.0
         checks.append(Check(metric, ma, mb, delta, tol, p, worse, worse and p < alpha))
     return checks, info
+
+
+@dataclass
+class Gain:
+    metric: str
+    baseline: float
+    candidate: float
+    delta: float
+    needed: float
+    p: float
+    better: bool
+    shown: bool
+
+
+def gains(base: dict, cand: dict, needed: dict[str, float], alpha: float = 0.05, rounds: int = 10000) -> list[Gain]:
+    """Is the candidate better than the baseline by more than the gain needed, beyond noise?
+
+    The same one-sided paired randomization test as the drop check, pointed the other way: the null is
+    "the true gain is at most the needed one". Use it when a change has to earn its cost (an embedding
+    model, a new index) before it ships."""
+    shared, _ = _shared(base, cand)
+    out = []
+    for metric, need in needed.items():
+        a, b = _paired(base, cand, shared, metric)
+        ma, mb = statistics.fmean(a), statistics.fmean(b)
+        delta = mb - ma
+        up = M.higher_is_better(metric)
+        better = delta > need if up else delta < -need
+        p = drop_p_value(b, a, need, up, rounds) if better else 1.0
+        out.append(Gain(metric, ma, mb, delta, need, p, better, better and p < alpha))
+    return out
 
 
 def movers(base: dict, cand: dict, metric: str, n: int = 5) -> tuple[list, list]:
@@ -140,9 +178,12 @@ def movers(base: dict, cand: dict, metric: str, n: int = 5) -> tuple[list, list]
     return worst, best
 
 
-def markdown(checks: list[Check], info: dict, base: dict, cand: dict, alpha: float) -> str:
+def markdown(checks: list[Check], info: dict, base: dict, cand: dict, alpha: float,
+             gained: list[Gain] | None = None) -> str:
     failed = any(c.failed for c in checks)
-    lines = [f"### relevance-gate: {'FAIL, search got worse' if failed else 'pass'}", "",
+    unshown = any(not g.shown for g in gained or [])
+    head = "FAIL, search got worse" if failed else "FAIL, the gain is not shown" if unshown else "pass"
+    lines = [f"### relevance-gate: {head}", "",
              f"{info['shared']} judged queries compared"
              + (f" ({info['only_baseline']} only in baseline, {info['only_candidate']} only in candidate)"
                 if info["only_baseline"] or info["only_candidate"] else "") + ".", "",
@@ -157,6 +198,18 @@ def markdown(checks: list[Check], info: dict, base: dict, cand: dict, alpha: flo
             result = "ok"
         p = f"{c.p:.4f}" if c.worse else ""
         lines.append(f"| {c.metric} | {c.baseline:.4f} | {c.candidate:.4f} | {c.delta:+.4f} | {c.tolerance:g} | {p} | {result} |")
+    if gained:
+        lines += ["", "| metric | baseline | candidate | change | gain needed | p | result |", "|---|---|---|---|---|---|---|"]
+        for g in gained:
+            if g.shown:
+                result = "better, shown"
+            elif g.better:
+                result = f"better, but not significant at {alpha:g}"
+            else:
+                result = "not better by the gain needed"
+            p = f"{g.p:.4f}" if g.better else ""
+            lines.append(f"| {g.metric} | {g.baseline:.4f} | {g.candidate:.4f} | {g.delta:+.4f} | {g.needed:g} | {p} "
+                         f"| {result} |")
     worst, best = movers(base, cand, checks[0].metric) if checks else ([], [])
     if worst:
         lines += ["", f"Queries that lost the most {checks[0].metric}:", ""]

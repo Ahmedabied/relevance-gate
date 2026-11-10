@@ -13,7 +13,7 @@ from . import __version__
 from . import metrics as M
 from .data import DataError, fetch, load
 from .engines import CommandEngine, EngineError, Fts5Engine, FusedEngine, HttpEngine, RunEngine
-from .gate import compare, evaluate, load_report, markdown
+from .gate import compare, evaluate, gains, load_report, markdown
 from .runs import write_run
 
 
@@ -92,7 +92,7 @@ def _summary(report: dict) -> None:
         print(f"  {'latency':<14}p50 {lat['p50']:.2f} ms, p95 {lat['p95']:.2f} ms", file=sys.stderr)
 
 
-def _tolerances(spec: str) -> dict[str, float]:
+def _tolerances(spec: str, flag: str = "--fail-on") -> dict[str, float]:
     out = {}
     for part in spec.split(","):
         part = part.strip()
@@ -102,20 +102,21 @@ def _tolerances(spec: str) -> dict[str, float]:
         M.parse(name.strip())
         out[name.strip()] = float(tol) if tol else 0.0
     if not out:
-        raise ValueError("--fail-on needs at least one metric, e.g. ndcg@10=0.01")
+        raise ValueError(f"{flag} needs at least one metric, e.g. ndcg@10=0.01")
     return out
 
 
 def cmd_gate(a) -> int:
     base, cand = load_report(a.baseline), load_report(a.candidate)
     checks, info = compare(base, cand, _tolerances(a.fail_on), a.alpha, a.rounds)
-    md = markdown(checks, info, base, cand, a.alpha)
+    gained = gains(base, cand, _tolerances(a.require_gain, "--require-gain"), a.alpha, a.rounds) if a.require_gain else []
+    md = markdown(checks, info, base, cand, a.alpha, gained)
     print(md)
     summary = a.summary or os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as f:
             f.write(md + "\n")
-    return 1 if any(c.failed for c in checks) else 0
+    return 1 if any(c.failed for c in checks) or any(not g.shown for g in gained) else 0
 
 
 def cmd_sample(a) -> int:
@@ -288,6 +289,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--fail-on", default="ndcg@10=0.005,recall@100=0.005,zero_results=0.005",
                    help="metric=allowed drop, comma separated (default ndcg@10=0.005,recall@100=0.005,zero_results=0.005)")
     g.add_argument("--alpha", type=float, default=0.05, help="fail only if p (chance of a drop this big if the true drop were within the allowed one) is below this")
+    g.add_argument("--require-gain", metavar="SPEC",
+                   help="metric=gain, comma separated: also exit 1 unless the candidate is better by more than the "
+                        "gain, beyond noise (for a change that has to earn its cost)")
     g.add_argument("--rounds", type=int, default=10000, help="randomization test rounds")
     g.add_argument("--summary", help="also append the markdown here (GITHUB_STEP_SUMMARY is used if set)")
     g.set_defaults(fn=cmd_gate)

@@ -16,6 +16,9 @@ inputs:
   alpha:
     description: Fail only if the drop is significant at this level
     default: "0.05"
+  require-gain:
+    description: metric=gain, comma separated; also fail unless the candidate is better by more than the gain, beyond noise
+    default: ""
 runs:
   using: composite
   steps:
@@ -29,4 +32,5 @@ runs:
         CANDIDATE: ${{ inputs.candidate }}
         FAIL_ON: ${{ inputs.fail-on }}
         ALPHA: ${{ inputs.alpha }}
-      run: relevance-gate gate "$BASELINE" "$CANDIDATE" --fail-on "$FAIL_ON" --alpha "$ALPHA"
+        REQUIRE_GAIN: ${{ inputs.require-gain }}
+      run: relevance-gate gate "$BASELINE" "$CANDIDATE" --fail-on "$FAIL_ON" --alpha "$ALPHA" ${REQUIRE_GAIN:+--require-gain "$REQUIRE_GAIN"}
