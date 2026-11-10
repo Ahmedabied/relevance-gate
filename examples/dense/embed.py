@@ -87,7 +87,7 @@ def write(path: Path, text: str) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def cached_docs(path: str, corpus_sha: str, n: int):
+def cached_docs(path: str, corpus_sha: str, n: int, model: str = MODEL, revision: str = REVISION):
     """The cached document vectors, or None when there is no cache yet. A cache made from another corpus
     (or another model) is refused, never silently used."""
     import numpy as np
@@ -96,7 +96,7 @@ def cached_docs(path: str, corpus_sha: str, n: int):
     if not vecs.exists():
         return None
     info = json.loads(meta.read_text(encoding="utf-8")) if meta.exists() else {}
-    if info.get("corpus_sha256") != corpus_sha or info.get("model") != MODEL or info.get("revision") != REVISION:
+    if info.get("corpus_sha256") != corpus_sha or info.get("model") != model or info.get("revision") != revision:
         raise SystemExit(f"{path} was made from another corpus or model; delete it or pass another --doc-cache")
     out = np.load(vecs, allow_pickle=False)
     if out.shape[0] != n:
@@ -104,16 +104,16 @@ def cached_docs(path: str, corpus_sha: str, n: int):
     return out
 
 
-def save_docs(path: str, corpus_sha: str, vecs) -> None:
+def save_docs(path: str, corpus_sha: str, vecs, model: str = MODEL, revision: str = REVISION) -> None:
     import numpy as np
 
     with open(path, "wb") as f:
         np.save(f, vecs, allow_pickle=False)
-    Path(path + ".json").write_text(json.dumps({"corpus_sha256": corpus_sha, "model": MODEL, "revision": REVISION}),
+    Path(path + ".json").write_text(json.dumps({"corpus_sha256": corpus_sha, "model": model, "revision": revision}),
                                     encoding="utf-8")
 
 
-def model_encoder(batch_size: int = 32):
+def model_encoder(batch_size: int = 32, name: str = MODEL, revision: str = REVISION):
     import numpy
     import sentence_transformers
     import torch
@@ -121,7 +121,7 @@ def model_encoder(batch_size: int = 32):
     from sentence_transformers import SentenceTransformer
 
     torch.manual_seed(0)
-    model = SentenceTransformer(MODEL, revision=REVISION, device="cpu")
+    model = SentenceTransformer(name, revision=revision, device="cpu")
 
     def encode(texts):
         return model.encode(texts, batch_size=batch_size, normalize_embeddings=True, convert_to_numpy=True,
@@ -142,30 +142,38 @@ def main(argv=None, encoder=None) -> int:
     p.add_argument("-o", "--output", required=True, help="run file to write (.gz to compress)")
     p.add_argument("--meta", help="also write what made the run (model, versions, timings) as JSON here")
     p.add_argument("--batch-size", type=int, default=32)
+    p.add_argument("--model", default=MODEL, help=f"a sentence-transformers model (default {MODEL})")
+    p.add_argument("--revision", help="its commit on the Hugging Face hub; required with --model, so the run can be "
+                                      "made again")
+    p.add_argument("--tag", help="the run's tag (default: the model's name)")
     p.add_argument("--doc-cache", help="keep the document vectors in this .npy file and reuse them when it exists, "
                                        "so another split's queries do not embed the corpus again")
     a = p.parse_args(argv)
+    if a.model != MODEL and not a.revision:
+        p.error("--model needs --revision (the model's commit), so the run can be made again")
+    revision = a.revision or REVISION
+    tag = a.tag or a.model.rsplit("/", 1)[-1]
 
     doc_ids, doc_texts, qids, qtexts = load(Path(a.data).expanduser(), a.split)
     if encoder is None:
-        encode, versions = model_encoder(a.batch_size)
+        encode, versions = model_encoder(a.batch_size, a.model, revision)
     else:
         encode, versions = encoder, {"encoder": "test"}
     corpus_sha = hashlib.sha256("\0".join(doc_ids + doc_texts).encode("utf-8")).hexdigest()
     t0 = time.perf_counter()
-    doc_vecs = cached_docs(a.doc_cache, corpus_sha, len(doc_ids)) if a.doc_cache else None
+    doc_vecs = cached_docs(a.doc_cache, corpus_sha, len(doc_ids), a.model, revision) if a.doc_cache else None
     cached = doc_vecs is not None
     if not cached:
         doc_vecs = encode(doc_texts)
         if a.doc_cache:
-            save_docs(a.doc_cache, corpus_sha, doc_vecs)
+            save_docs(a.doc_cache, corpus_sha, doc_vecs, a.model, revision)
     t1 = time.perf_counter()
     query_vecs = encode([QUERY_PREFIX + q for q in qtexts])
     t2 = time.perf_counter()
     ranked = top_k(doc_vecs, query_vecs, a.k)
     t3 = time.perf_counter()
-    sha = write(Path(a.output), run_text(qids, ranked, doc_ids))
-    meta = {"model": MODEL, "revision": REVISION, "query_prefix": QUERY_PREFIX, "dataset": Path(a.data).name,
+    sha = write(Path(a.output), run_text(qids, ranked, doc_ids, tag))
+    meta = {"model": a.model, "revision": revision, "query_prefix": QUERY_PREFIX, "dataset": Path(a.data).name,
             "split": a.split, "docs": len(doc_ids), "queries": len(qids), "k": a.k, "sha256": sha,
             "seconds": {"docs": round(t1 - t0, 2), "queries": round(t2 - t1, 2), "search": round(t3 - t2, 3)},
             "docs_per_second": None if cached else round(len(doc_ids) / max(t1 - t0, 1e-9), 1),

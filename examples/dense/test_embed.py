@@ -132,3 +132,18 @@ def test_tune_grid_on_held_out_queries(data, tmp_path, capsys):
     assert tune.main(["--data", str(data), "--split", "train", "--dense", str(run)]) == 0
     out = capsys.readouterr().out
     assert "1 queries" in out and out.count("\n| ") == len(tune.KS) + 1 and "best: k" in out
+
+
+def test_another_model_needs_its_revision_and_tags_the_run(data, tmp_path):
+    with pytest.raises(SystemExit):
+        embed.main(["--data", str(data), "-o", str(tmp_path / "x.run"), "--model", "org/other"], encoder=fake_encode)
+    out = tmp_path / "other.run"
+    embed.main(["--data", str(data), "-o", str(out), "--model", "org/other", "--revision", "abc123",
+                "--meta", str(tmp_path / "m.json"), "--doc-cache", str(tmp_path / "d.npy")], encoder=fake_encode)
+    assert out.read_text().split("\n", 1)[0].endswith(" other")
+    meta = json.loads((tmp_path / "m.json").read_text())
+    assert meta["model"] == "org/other" and meta["revision"] == "abc123"
+    # the cache remembers the model: the default model may not reuse it
+    with pytest.raises(SystemExit, match="another corpus or model"):
+        embed.main(["--data", str(data), "-o", str(tmp_path / "y.run"), "--doc-cache", str(tmp_path / "d.npy")],
+                   encoder=fake_encode)
