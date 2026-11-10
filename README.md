@@ -93,7 +93,16 @@ not shaped by one engine alone. 150 queries with 10 results each is a few hours 
 
 Rather grade in the browser? Add `--pool-out pool.jsonl` and `judge` writes the documents still to grade instead
 of asking. Open that file in [judge-ui](https://github.com/Ahmedabied/judge-ui) (keys 2, 1, 0; progress kept in
-the browser) and save its export as `mysearch/qrels/test.tsv`.
+the browser), export, and add the export to your grades:
+
+```sh
+relevance-gate judge --data mysearch --take grades.tsv
+```
+
+A pool holds only what is not judged yet, so an export holds only the new grades. `--take` adds them to
+`mysearch/qrels/test.tsv`: every earlier grade stays, a document graded again takes the newer grade (each one is
+printed), and the file is replaced in one move, never half written. Do not save an export over the qrels file:
+from the second round on, that would drop every grade from the rounds before.
 
 **Check the judges agree.** Have a second person grade a sample of the same pool (say 20 queries) into their own
 file, then:
@@ -133,7 +142,7 @@ relevance-gate eval --data mysearch --engine command --cmd 'python my_search.py'
 
 ```yaml
 - run: relevance-gate eval --data mysearch --engine command --cmd 'python my_search.py' -o candidate.json
-- uses: Ahmedabied/relevance-gate@v0.1.0
+- uses: Ahmedabied/relevance-gate@v0.2.0
   with:
     baseline: baseline.json
     candidate: candidate.json
@@ -196,7 +205,7 @@ A document returned twice counts once. Pick metrics with `--metrics ndcg@10,reca
 
 ```sh
 pip install -e '.[test]'
-pytest -q               # 60 tests, about 2 s
+pytest -q               # 66 tests, about 3 s
 ```
 
 Tests use a generated corpus, so CI needs no downloads. The `search-quality` workflow runs the real SciFact gate.

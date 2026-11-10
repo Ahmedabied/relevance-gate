@@ -114,11 +114,27 @@ def cmd_sample(a) -> int:
     return 0
 
 
+def _count(n: int, one: str, many: str | None = None) -> str:
+    return f"{n} {one if n == 1 else many or one + 's'}"
+
+
 def cmd_judge(a) -> int:
     from .data import _jsonl
     from .judging import judge
 
     root = Path(a.data)
+    out = a.output or str(root / "qrels" / "test.tsv")
+    if a.take:
+        from .judging import safe, take
+
+        s = take(a.take, out)
+        print(f"{_count(s['added'], 'grade')} added to {out}, {len(s['changed'])} changed, {s['kept']} kept "
+              f"({s['total']} in all)")
+        for qid, doc, old, new in s["changed"][:20]:
+            print(f"  {safe(qid)} {safe(doc)}: {old} -> {new}")
+        if len(s["changed"]) > 20:
+            print(f"  and {len(s['changed']) - 20} more")
+        return 0
     searchers = []
     if a.url:
         if not a.ids:
@@ -132,16 +148,19 @@ def cmd_judge(a) -> int:
             o = _opts([x for x in spec.split(",") if x.strip()])
             searchers.append(Fts5Engine(docs, o.get("tokenizer", "porter unicode61 remove_diacritics 2"),
                                         o.get("mode", "or"), float(o.get("title_weight", 1.0))).search)
-    out = a.output or str(root / "qrels" / "test.tsv")
     if a.pool_out:
         from .judging import write_pool
 
         stats = write_pool(root, searchers, a.depth, out, a.pool_out)
-        print(f"{stats['documents']} documents for {stats['queries']} queries written to {a.pool_out}; "
-              f"grade them at https://judge-ui.ahmed-abied.workers.dev and save the export as {out}")
+        back = ["relevance-gate", "judge", "--data", a.data, *(["-o", a.output] if a.output else []), "--take"]
+        print(f"{_count(stats['documents'], 'document')} for {_count(stats['queries'], 'query', 'queries')} "
+              f"written to {a.pool_out}. Grade them "
+              f"at https://judge-ui.ahmed-abied.workers.dev, then add the export to {out}:\n"
+              f"  {' '.join(shlex.quote(x) for x in back)} grades.tsv")
         return 0
     stats = judge(root, searchers, a.depth, out, sys.stdin, sys.stdout)
-    print(f"\n{stats['judged']} grades saved to {out} ({stats['skipped']} skipped, {stats['queries']} queries)")
+    print(f"\n{_count(stats['judged'], 'grade')} saved to {out} ({stats['skipped']} skipped, "
+          f"{_count(stats['queries'], 'query', 'queries')})")
     return 0
 
 
@@ -234,8 +253,11 @@ def build_parser() -> argparse.ArgumentParser:
     j.add_argument("--ids", help="where the ids are in your engine's JSON")
     j.add_argument("--depth", type=int, default=10, help="top results per config to pool (default 10)")
     j.add_argument("-o", "--output", help="qrels file (default DATA/qrels/test.tsv)")
-    j.add_argument("--pool-out", metavar="FILE", help="write the documents to judge to FILE for judge-ui in the "
-                                                    "browser instead of asking here")
+    browser = j.add_mutually_exclusive_group()
+    browser.add_argument("--pool-out", metavar="FILE", help="write the documents to judge to FILE for judge-ui in "
+                                                          "the browser instead of asking here")
+    browser.add_argument("--take", metavar="FILE", help="add a judge-ui export to the qrels file: new grades go in, "
+                                                      "a newer grade wins, every earlier grade stays")
     j.set_defaults(fn=cmd_judge)
 
     ag = sub.add_parser("agree", help="how far two judges agree on the documents both graded (Cohen's kappa)")

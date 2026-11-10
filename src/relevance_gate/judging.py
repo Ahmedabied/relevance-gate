@@ -17,6 +17,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 import random
 import re
 import unicodedata
@@ -195,6 +196,60 @@ def write_pool(data: str | Path, searchers: list[Callable[[str, int], list[str]]
                                     "text": body[:20000]}, ensure_ascii=False) + "\n")
                 stats["documents"] += 1
     return stats
+
+
+def take(export: str | Path, qrels: str | Path) -> dict:
+    """Add the grades in `export` (what judge-ui exports, or any qrels file) to the qrels file.
+
+    A pool leaves judged documents out, so an export holds only the new grades: saved over the qrels file it would
+    wipe every earlier round. Here a new pair goes at the end, a pair graded again takes the newer grade, and every
+    other line stays as it was. The result is written beside the file and moved into place, so a crash leaves the
+    old file, never half of one."""
+    export, qrels = Path(export), Path(qrels)
+    if qrels.exists() and export.exists() and export.samefile(qrels):
+        raise ValueError(f"{export} is the qrels file itself; --take wants the export from judge-ui")
+    new = {(q, d): s for q, docs in load_qrels(export).items() for d, s in docs.items()}
+    if not new:
+        raise ValueError(f"{export}: no grades in it (it needs lines of query id, document id and grade, with tabs "
+                         "between them)")
+    lines: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    changed: list[tuple[str, str, int, int]] = []
+    kept = 0
+    if qrels.exists():
+        load_qrels(qrels)  # a line that is not a grade stops here, before anything is written
+        with open(qrels, encoding="utf-8") as f:
+            for n, line in enumerate(f, 1):
+                line = line.rstrip("\n")
+                parts = line.split("\t")
+                if len(parts) < 3 or (n == 1 and not parts[2].lstrip("-").isdigit()):
+                    lines.append(line)  # header or blank, as load_qrels reads it
+                    continue
+                pair, old = (parts[0], parts[1]), int(parts[-1])
+                if pair in new and new[pair] != old:
+                    if pair not in seen:
+                        changed.append((*pair, old, new[pair]))
+                    parts[-1] = str(new[pair])
+                    line = "\t".join(parts)
+                elif pair not in seen:
+                    kept += 1
+                seen.add(pair)
+                lines.append(line)
+    if not lines:
+        lines.append("query-id\tcorpus-id\tscore")
+    added = [pair for pair in new if pair not in seen]
+    lines += [f"{q}\t{d}\t{new[q, d]}" for q, d in added]
+    qrels.parent.mkdir(parents=True, exist_ok=True)
+    tmp = qrels.with_name(qrels.name + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+            f.write("\n".join(lines) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, qrels)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return {"added": len(added), "changed": changed, "kept": kept, "total": len(seen) + len(added)}
 
 
 def write_queries(path: str | Path, picked: list[dict]) -> None:
