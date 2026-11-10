@@ -12,8 +12,9 @@ from pathlib import Path
 from . import __version__
 from . import metrics as M
 from .data import DataError, fetch, load
-from .engines import CommandEngine, EngineError, Fts5Engine, HttpEngine
+from .engines import CommandEngine, EngineError, Fts5Engine, FusedEngine, HttpEngine, RunEngine
 from .gate import compare, evaluate, load_report, markdown
+from .runs import write_run
 
 
 def _opts(items: list[str] | None) -> dict[str, str]:
@@ -46,6 +47,10 @@ def cmd_eval(a) -> int:
             raise ValueError(f"fts5 options are tokenizer, mode and title_weight; got {sorted(unknown)}")
         engine = Fts5Engine(ds.docs, o.get("tokenizer", "porter unicode61 remove_diacritics 2"),
                             o.get("mode", "or"), float(o.get("title_weight", 1.0)))
+    elif a.engine == "run":
+        if not a.run:
+            raise ValueError("the run engine needs --run FILE (a TREC run: query-id Q0 doc-id rank score tag)")
+        engine = RunEngine(a.run)
     elif a.engine == "http":
         if not a.url or not a.ids:
             raise ValueError("the http engine needs --url (with {query}) and --ids (where the ids are in the JSON)")
@@ -54,18 +59,32 @@ def cmd_eval(a) -> int:
         if not a.cmd:
             raise ValueError("the command engine needs --cmd")
         engine = CommandEngine(shlex.split(a.cmd))
-    report = evaluate(engine, ds, names, query_text=not a.no_query_text)
+    fused = [RunEngine(f) for f in a.fuse or []]
+    if fused:
+        engine = FusedEngine(engine, fused, a.fuse_weight, a.rrf_k, a.fuse_depth)
+    ranked: dict[str, list[str]] = {}
+    report = evaluate(engine, ds, names, query_text=not a.no_query_text, ranked=ranked)
+    for r in fused + ([engine] if isinstance(engine, RunEngine) else []):
+        if r.missing:
+            print(f"relevance-gate: warning: {r.path.name} has no results for {r.missing} of {len(ds.queries)} "
+                  "judged queries", file=sys.stderr)
     text = json.dumps(report, indent=1, ensure_ascii=False)
     if a.output:
         Path(a.output).write_text(text + "\n", encoding="utf-8")
+    if a.run_out:
+        write_run(ranked, a.run_out, engine.name)
     _summary(report)
     return 0
 
 
 def _summary(report: dict) -> None:
     eng = report["engine"]
-    desc = ", ".join(f"{k}={v}" for k, v in eng.items() if k != "name")
+    skip = {"name", "fused", "rrf_k", "fuse_depth"}
+    desc = ", ".join(f"{k}={v}" for k, v in eng.items() if k not in skip)
     print(f"{report['dataset']}: {report['queries']} queries, engine {eng['name']} ({desc})", file=sys.stderr)
+    for f in eng.get("fused", []):
+        print(f"  fused with {f['file']} (weight {f['weight']:g}, rrf k {eng['rrf_k']:g}, depth {eng['fuse_depth']})",
+              file=sys.stderr)
     for k, v in report["metrics"].items():
         print(f"  {k:<14}{v:.4f}", file=sys.stderr)
     lat = report.get("latency_ms") or {}
@@ -213,13 +232,20 @@ def build_parser() -> argparse.ArgumentParser:
     e = sub.add_parser("eval", help="run the judged queries through a search engine and write a report")
     e.add_argument("--data", required=True, help="dataset folder (BEIR layout)")
     e.add_argument("--split", default="test")
-    e.add_argument("--engine", choices=["fts5", "http", "command"], default="fts5")
+    e.add_argument("--engine", choices=["fts5", "http", "command", "run"], default="fts5")
     e.add_argument("--opt", action="append", metavar="KEY=VALUE",
                    help="fts5 options: tokenizer='porter unicode61', mode=or|and, title_weight=2")
     e.add_argument("--url", help="http engine: URL with {query} (and optional {k})")
     e.add_argument("--ids", help="http engine: where the ids are in the JSON, e.g. hits.*.id")
     e.add_argument("--workers", type=int, default=8)
     e.add_argument("--cmd", help="command engine: reads JSON lines {qid, query, k}, prints {qid, ids}")
+    e.add_argument("--run", help="run engine: a TREC run file (query-id Q0 doc-id rank score tag), .gz is fine")
+    e.add_argument("--fuse", action="append", metavar="RUN",
+                   help="mix the engine's results with this run file by reciprocal rank fusion (repeatable)")
+    e.add_argument("--fuse-weight", type=float, default=1.0, help="weight of each --fuse run; the engine's is 1")
+    e.add_argument("--rrf-k", type=float, default=60.0, help="fusion constant k in weight / (k + rank) (default 60)")
+    e.add_argument("--fuse-depth", type=int, default=100, help="results taken from each list before fusing")
+    e.add_argument("--run-out", metavar="FILE", help="also write the ranked results as a TREC run (.gz to compress)")
     e.add_argument("--metrics", default=",".join(M.DEFAULT))
     e.add_argument("--limit", type=int, help="only the first N queries (by id)")
     e.add_argument("-o", "--output", help="write the report JSON here")

@@ -20,12 +20,16 @@ from .data import Dataset
 from .engines import Engine
 
 
-def evaluate(engine: Engine, ds: Dataset, names: list[str] | None = None, query_text: bool = True) -> dict:
+def evaluate(engine: Engine, ds: Dataset, names: list[str] | None = None, query_text: bool = True,
+             ranked: dict[str, list[str]] | None = None) -> dict:
+    """Run every judged query, score it, return the report. Pass a dict as `ranked` to get the results too."""
     names = names or M.DEFAULT
     for n in names:
         M.parse(n)
     depth = M.depth_needed(names)
     run, ms = engine.search_all(ds.queries, depth)
+    if ranked is not None:
+        ranked.update(run)
     per_query = {}
     for qid, judged in ds.qrels.items():
         s = M.score(run.get(qid, []), judged, names)
