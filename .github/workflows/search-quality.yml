@@ -33,3 +33,14 @@ jobs:
         with:
           baseline: examples/scifact/baseline.json
           candidate: candidate.json
+      # The other question: a change that has a cost (here an embedding model) must prove it is better.
+      - name: Evaluate hybrid (this commit's BM25 plus the committed dense run)
+        run: |
+          relevance-gate eval --data ~/.cache/relevance-gate/scifact $(cat examples/scifact/engine.args) \
+            --fuse examples/dense/scifact.run.gz -o hybrid.json
+      - name: Hybrid must beat the baseline by more than 0.005
+        uses: ./
+        with:
+          baseline: examples/scifact/baseline.json
+          candidate: hybrid.json
+          require-gain: ndcg@10=0.005
